@@ -1,3 +1,120 @@
+# --- Template defaults ---
 storage*
 github*
 CLAUDE.md
+
+# --- Secrets / environment variables ---
+.env
+.env.*
+*.env
+.envrc
+.secrets
+secrets.*
+*.pem
+*.key
+
+# --- Virtual environments ---
+proj2/
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# --- Project data (raw API dumps, database, logs) ---
+data/
+logs/
+*.log
+*.duckdb
+*.duckdb.wal
+*.db
+*.sqlite
+*.tmp
+*.part
+
+# --- dbt ---
+target/
+dbt_packages/
+dbt_modules/
+.user.yml
+
+# --- Prefect ---
+.prefect/
+.prefectignore
+
+# --- Byte-compiled / optimized / DLL files ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- C extensions ---
+*.so
+
+# --- Distribution / packaging ---
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- PyInstaller ---
+*.manifest
+*.spec
+
+# --- Installer logs ---
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Unit test / coverage reports ---
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# --- Jupyter / IPython ---
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# --- Type checkers / linters ---
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# --- uv / pip tools ---
+.uv/
+uv.lock
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
