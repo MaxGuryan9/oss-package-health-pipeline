@@ -38,6 +38,27 @@ def make_client() -> httpx.Client:
     return httpx.Client(headers=HEADERS, timeout=REQUEST_TIMEOUT)
 
 
+def github_get(client: httpx.Client, url: str, params: dict | None = None) -> httpx.Response:
+    """GET one GitHub URL and return the response. Raises on any non-200 status."""
+    response = client.get(url, params=params)
+    if response.status_code != 200:
+        raise RuntimeError(f"HTTP {response.status_code} for {url}: {response.text[:200]}")
+    return response
+
+
+def fetch_pages(client: httpx.Client, repo: str, path: str, params: dict) -> list[dict]:
+    """Fetch every page of one endpoint by following Link rel="next". Returns all records."""
+    url = API_BASE.format(REPOS=repo, TYPE=path)
+    params = {**params, "per_page": PER_PAGE}
+    records = []
+    while url:
+        response = github_get(client, url, params)
+        records.extend(response.json())
+        url = response.links.get("next", {}).get("url")
+        params = None
+    return records
+
+
 @task(name="extract")
 def extract() -> None:
     """Task 1: pull commits, PRs, reviews, and releases to data/raw/."""
