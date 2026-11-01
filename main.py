@@ -1,6 +1,9 @@
 import json
+import logging
 import os
 import shutil
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,12 +17,16 @@ API_BASE = "https://api.github.com/repos/{REPOS}/{TYPE}"
 PER_PAGE = 100
 API_VERSION = "2026-03-10"
 REQUEST_TIMEOUT = 30.0
+RATE_LIMIT_BUFFER = 25
+RATE_LOCK = threading.Lock()  # shared by parallel repo fetches: one token, one budget
 
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
 LOG_DIR = PROJECT_DIR / "logs"
 LOADED_MARKER = RAW_DIR / "_LOADED"
 DB_PATH = PROJECT_DIR / "packages.duckdb"
+
+logger = logging.getLogger("extract")
 
 
 def get_token() -> str:
@@ -42,12 +49,51 @@ def make_client() -> httpx.Client:
     return httpx.Client(headers=HEADERS, timeout=REQUEST_TIMEOUT)
 
 
+class TransientHTTPError(Exception):
+    """Temporary failure (rate limit, 5xx, network, bad JSON); Prefect should retry."""
+
+
+class PermanentHTTPError(Exception):
+    """Failure a retry cannot fix (bad token, bad URL); Prefect should not retry."""
+
+
+def wait_for_rate_limit(response: httpx.Response) -> None:
+    """Primary limit: once remaining <= buffer, sleep until the reset time."""
+    remaining = response.headers.get("X-RateLimit-Remaining")
+    reset = response.headers.get("X-RateLimit-Reset")
+    if remaining is None or reset is None or int(remaining) > RATE_LIMIT_BUFFER:
+        return
+    with RATE_LOCK:
+        delay = int(reset) + 5 - time.time()
+        if delay > 0:
+            logger.warning(f"Rate limit: {remaining} left; sleeping {delay:.0f}s until reset")
+            time.sleep(delay)
+
+
 def github_get(client: httpx.Client, url: str, params: dict | None = None) -> httpx.Response:
-    """GET one GitHub URL and return the response. Raises on any non-200 status."""
-    response = client.get(url, params=params)
-    if response.status_code != 200:
-        raise RuntimeError(f"HTTP {response.status_code} for {url}: {response.text[:200]}")
-    return response
+    """GET one URL. Returns a 200 response; raises Transient/PermanentHTTPError otherwise."""
+    with RATE_LOCK:
+        pass  # if another thread is sleeping off the rate limit, wait here until it's done
+    try:
+        response = client.get(url, params=params)
+    except httpx.TransportError as exc:
+        raise TransientHTTPError(f"Network error for {url}: {exc}") from exc
+
+    wait_for_rate_limit(response)
+
+    status = response.status_code
+    if status == 200:
+        return response
+    if status in (403, 429) and "Retry-After" in response.headers:
+        wait = int(response.headers["Retry-After"])
+        with RATE_LOCK:
+            time.sleep(wait)
+        raise TransientHTTPError(f"Secondary rate limit {status} for {url}; waited {wait}s")
+    if status == 429 or (status == 403 and "rate limit" in response.text.lower()):
+        raise TransientHTTPError(f"Rate limit {status} for {url}: {response.text[:200]}")
+    if status >= 500:
+        raise TransientHTTPError(f"Server error {status} for {url}")
+    raise PermanentHTTPError(f"HTTP {status} for {url}: {response.text[:200]}")
 
 
 def landing_dir(repo: str, endpoint: str) -> Path:
@@ -97,7 +143,10 @@ def fetch_pages(
 
     while url:
         response = github_get(client, url, params)
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise TransientHTTPError(f"Invalid JSON from {response.url}: {response.text[:200]!r}") from exc
         next_url = response.links.get("next", {}).get("url")
         if stop_before and data and data[-1]["updated_at"] < stop_before:
             next_url = None  # sorted by updated desc: every later page is older than the window
