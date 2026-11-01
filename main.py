@@ -70,6 +70,7 @@ def fetch_pages(
     params: dict,
     path: str | None = None,
     out_dir: Path | None = None,
+    stop_before: str | None = None,
 ) -> list[dict]:
     """Fetch every page of one endpoint, write each to a landing file, return all records.
 
@@ -98,6 +99,8 @@ def fetch_pages(
         response = github_get(client, url, params)
         data = response.json()
         next_url = response.links.get("next", {}).get("url")
+        if stop_before and data and data[-1]["updated_at"] < stop_before:
+            next_url = None  # sorted by updated desc: every later page is older than the window
         write_page(out_dir / f"page_{page:04d}.json", {
             "repo": repo,
             "endpoint": endpoint,
@@ -112,6 +115,26 @@ def fetch_pages(
         params = None
         page += 1
     return records
+
+
+def fetch_reviews(
+    client: httpx.Client,
+    repo: str,
+    prs: list[dict],
+    created_since: str = WINDOW_START,
+    out_dir: Path | None = None,
+) -> list[dict]:
+    """One reviews call per PR created in the window, merged or not (README Task 1)."""
+    out_dir = out_dir or landing_dir(repo, "reviews")
+    reviews = []
+    for pr in prs:
+        if pr["created_at"] >= created_since:
+            n = pr["number"]
+            reviews.extend(fetch_pages(
+                client, repo, "reviews", {},
+                path=f"pulls/{n}/reviews", out_dir=out_dir / f"pr_{n}",
+            ))
+    return reviews
 
 
 def prepare_raw_dir() -> str:
