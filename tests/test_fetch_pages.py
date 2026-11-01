@@ -3,6 +3,7 @@
 Run from the project root:  python tests/test_fetch_pages.py
 """
 import sys
+import tempfile
 from pathlib import Path
 
 # Make main.py (one folder up) importable when this file is run directly.
@@ -13,8 +14,11 @@ import main
 
 def test_fetch_pages() -> None:
     main.PER_PAGE = 10  # small pages force several Link rel="next" hops
-    with main.make_client() as client:
-        records = main.fetch_pages(client, "dask/dask", "commits", {"since": "2026-06-01T00:00:00Z"})
+    # Landing files go to a temp folder so test pages never mix with real data/raw/.
+    with tempfile.TemporaryDirectory() as tmp, main.make_client() as client:
+        records = main.fetch_pages(
+            client, "dask/dask", "commits", {"since": "2026-06-01T00:00:00Z"}, out_dir=Path(tmp)
+        )
 
     print(f"dask/dask commits since 2026-06-01: {len(records)} records")
     print("newest:", records[0]["sha"][:7], records[0]["commit"]["author"]["date"])

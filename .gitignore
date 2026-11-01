@@ -31,6 +31,7 @@ logs/
 *.sqlite
 *.tmp
 *.part
+tests/output/
 
 # --- dbt ---
 target/

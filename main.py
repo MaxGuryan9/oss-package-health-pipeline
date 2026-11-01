@@ -1,4 +1,6 @@
+import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -12,10 +14,11 @@ PER_PAGE = 100
 API_VERSION = "2026-03-10"
 REQUEST_TIMEOUT = 30.0
 
-RAW_DIR = Path("data/raw")
-LOG_DIR = Path("logs")
+PROJECT_DIR = Path(__file__).resolve().parent
+RAW_DIR = PROJECT_DIR / "data" / "raw"
+LOG_DIR = PROJECT_DIR / "logs"
 LOADED_MARKER = RAW_DIR / "_LOADED"
-DB_PATH = Path("packages.duckdb")
+DB_PATH = PROJECT_DIR / "packages.duckdb"
 
 
 def get_token() -> str:
@@ -46,16 +49,48 @@ def github_get(client: httpx.Client, url: str, params: dict | None = None) -> ht
     return response
 
 
-def fetch_pages(client: httpx.Client, repo: str, path: str, params: dict) -> list[dict]:
-    """Fetch every page of one endpoint by following Link rel="next". Returns all records."""
-    url = API_BASE.format(REPOS=repo, TYPE=path)
+def landing_dir(repo: str, endpoint: str) -> Path:
+    """data/raw/<owner>__<repo>/<endpoint>, per the README landing format."""
+    return RAW_DIR / repo.replace("/", "__") / endpoint
+
+
+def write_page(file_path: Path, body: dict) -> None:
+    """Write one landing file atomically: temp file first, then rename."""
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = file_path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(body))
+    os.replace(tmp_path, file_path)
+
+
+def fetch_pages(
+    client: httpx.Client,
+    repo: str,
+    endpoint: str,
+    params: dict,
+    path: str | None = None,
+    out_dir: Path | None = None,
+) -> list[dict]:
+    """Fetch every page of one endpoint, write each to a landing file, return all records."""
+    url = API_BASE.format(REPOS=repo, TYPE=path or endpoint)
+    out_dir = out_dir or landing_dir(repo, endpoint)
     params = {**params, "per_page": PER_PAGE}
     records = []
+    page = 1
     while url:
         response = github_get(client, url, params)
-        records.extend(response.json())
+        data = response.json()
+        write_page(out_dir / f"page_{page:04d}.json", {
+            "repo": repo,
+            "endpoint": endpoint,
+            "url": str(response.url),
+            "page": page,
+            "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "data": data,
+        })
+        records.extend(data)
         url = response.links.get("next", {}).get("url")
         params = None
+        page += 1
     return records
 
 
