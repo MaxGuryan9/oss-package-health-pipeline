@@ -58,7 +58,7 @@ def write_page(file_path: Path, body: dict) -> None:
     """Write one landing file atomically: temp file first, then rename."""
     file_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = file_path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(body))
+    tmp_path.write_text(json.dumps(body, indent=2))
     os.replace(tmp_path, file_path)
 
 
