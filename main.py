@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -70,28 +71,55 @@ def fetch_pages(
     path: str | None = None,
     out_dir: Path | None = None,
 ) -> list[dict]:
-    """Fetch every page of one endpoint, write each to a landing file, return all records."""
-    url = API_BASE.format(REPOS=repo, TYPE=path or endpoint)
+    """Fetch every page of one endpoint, write each to a landing file, return all records.
+
+    Resumes from pages already on disk: their records are read back and fetching
+    continues from the last page's saved next_url (None means already complete).
+    """
     out_dir = out_dir or landing_dir(repo, endpoint)
-    params = {**params, "per_page": PER_PAGE}
+    for tmp in out_dir.glob("*.tmp"):
+        tmp.unlink()  # leftovers from a crash mid-write; the matching .json was never created
+
+    pages = sorted(out_dir.glob("page_*.json"))
     records = []
-    page = 1
+    for f in pages:
+        records.extend(json.loads(f.read_text())["data"])
+
+    if pages:
+        url = json.loads(pages[-1].read_text())["next_url"]
+        params = None
+        page = len(pages) + 1
+    else:
+        url = API_BASE.format(REPOS=repo, TYPE=path or endpoint)
+        params = {**params, "per_page": PER_PAGE}
+        page = 1
+
     while url:
         response = github_get(client, url, params)
         data = response.json()
+        next_url = response.links.get("next", {}).get("url")
         write_page(out_dir / f"page_{page:04d}.json", {
             "repo": repo,
             "endpoint": endpoint,
             "url": str(response.url),
             "page": page,
             "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "next_url": next_url,
             "data": data,
         })
         records.extend(data)
-        url = response.links.get("next", {}).get("url")
+        url = next_url
         params = None
         page += 1
     return records
+
+
+def prepare_raw_dir() -> str:
+    """README 'Resume or start fresh?': _LOADED present means data/raw is in DuckDB, so start over."""
+    if LOADED_MARKER.exists():
+        shutil.rmtree(RAW_DIR)
+        return "fresh"
+    return "resume"
 
 
 @task(name="extract")

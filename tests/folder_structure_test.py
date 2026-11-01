@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
 
-REQUIRED_KEYS = {"repo", "endpoint", "url", "page", "fetched_at", "data"}
+REQUIRED_KEYS = {"repo", "endpoint", "url", "page", "fetched_at", "next_url", "data"}
 KEEP_DIR = Path(__file__).resolve().parent / "output"
 
 
