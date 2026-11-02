@@ -23,7 +23,7 @@ def fake_sleep(seconds: float) -> None:
     SLEEPS.append(seconds)
 
 
-main.time.sleep = fake_sleep
+main.pause = fake_sleep
 
 
 def fake_client(status: int, headers: dict | None = None, body: str = "[]", network_error: bool = False):
@@ -84,6 +84,19 @@ def test_rate_limit_and_errors() -> None:
             print(f"9. 200, broken JSON body  -> Transient: {str(exc)[:60]}")
         else:
             raise AssertionError("Expected TransientHTTPError for a broken JSON body")
+
+    sent = []
+    main.STOP.set()
+    client = httpx.Client(transport=httpx.MockTransport(lambda req: sent.append(req) or httpx.Response(200)))
+    try:
+        main.github_get(client, URL)
+    except main.RunInterrupted:
+        assert sent == [], "A request was sent after STOP was set"
+        print("10. STOP set (Ctrl-C)      -> RunInterrupted, no request sent")
+    else:
+        raise AssertionError("Expected RunInterrupted when STOP is set")
+    finally:
+        main.STOP.clear()
 
     print("All rate-limit and error checks passed")
 

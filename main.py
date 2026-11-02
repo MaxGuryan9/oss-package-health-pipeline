@@ -26,6 +26,7 @@ REQUEST_TIMEOUT = 30.0
 RATE_LIMIT_BUFFER = 25
 RATE_LOCK = threading.Lock()  # shared by parallel repo fetches: one token, one budget
 COUNT_LOCK = threading.Lock()
+STOP = threading.Event()  # set on Ctrl-C so worker threads stop at their next request or sleep
 REQUEST_COUNT = 0  # API requests sent this run
 LAST_REMAINING = "?"  # X-RateLimit-Remaining from the latest response, for the progress log
 PULLS_PARAMS = {"state": "all", "sort": "updated", "direction": "desc"}
@@ -78,6 +79,16 @@ class PermanentHTTPError(Exception):
     """Failure a retry cannot fix (bad token, bad URL); Prefect should not retry."""
 
 
+class RunInterrupted(Exception):
+    """Raised in worker threads after Ctrl-C; never retried."""
+
+
+def pause(seconds: float) -> None:
+    """Sleep, but wake early and raise if the run is interrupted."""
+    if STOP.wait(seconds):
+        raise RunInterrupted("Stopped by Ctrl-C")
+
+
 def wait_for_rate_limit(response: httpx.Response) -> None:
     """Primary limit: once remaining <= buffer, sleep until the reset time."""
     global LAST_REMAINING
@@ -91,7 +102,7 @@ def wait_for_rate_limit(response: httpx.Response) -> None:
         delay = int(reset) + 5 - time.time()
         if delay > 0:
             logger.warning(f"Rate limit: {remaining} left; sleeping {delay:.0f}s until reset")
-            time.sleep(delay)
+            pause(delay)
 
 
 def github_get(client: httpx.Client, url: str, params: dict | None = None) -> httpx.Response:
@@ -99,6 +110,8 @@ def github_get(client: httpx.Client, url: str, params: dict | None = None) -> ht
     global REQUEST_COUNT
     with RATE_LOCK:
         pass  # if another thread is sleeping off the rate limit, wait here until it's done
+    if STOP.is_set():
+        raise RunInterrupted("Stopped by Ctrl-C")
     try:
         response = client.get(url, params=params)
     except httpx.TransportError as exc:
@@ -114,7 +127,7 @@ def github_get(client: httpx.Client, url: str, params: dict | None = None) -> ht
     if status in (403, 429) and "Retry-After" in response.headers:
         wait = int(response.headers["Retry-After"])
         with RATE_LOCK:
-            time.sleep(wait)
+            pause(wait)
         raise TransientHTTPError(f"Secondary rate limit {status} for {url}; waited {wait}s")
     if status == 429 or (status == 403 and "rate limit" in response.text.lower()):
         raise TransientHTTPError(f"Rate limit {status} for {url}: {response.text[:200]}")
@@ -232,10 +245,10 @@ def prepare_raw_dir() -> str:
 
 
 def retry_if_transient(task, task_run, state) -> bool:
-    """Prefect retry condition: retry everything except PermanentHTTPError."""
+    """Prefect retry condition: retry everything except PermanentHTTPError and Ctrl-C stops."""
     try:
         state.result()
-    except PermanentHTTPError:
+    except (PermanentHTTPError, RunInterrupted):
         return False
     except Exception:
         return True
@@ -274,6 +287,7 @@ def extract(window_start: str = WINDOW_START) -> None:
     """Task 1: pull commits, PRs, reviews, and releases for all repos to data/raw/."""
     global REQUEST_COUNT
     REQUEST_COUNT = 0
+    STOP.clear()
     setup_file_log("extract")
     mode = prepare_raw_dir()
     logger.info(f"Extract starting ({mode}): {len(REPOS)} repos, window from {window_start}")
@@ -283,8 +297,13 @@ def extract(window_start: str = WINDOW_START) -> None:
     others += [fetch_endpoint.submit(r, "releases", {}) for r in REPOS]
     reviews = [fetch_reviews_task.submit(r, pulls[r], window_start) for r in REPOS]
 
-    for future in [*pulls.values(), *others, *reviews]:
-        future.result()  # raises if any task failed after its retries
+    try:
+        for future in [*pulls.values(), *others, *reviews]:
+            future.result()  # raises if any task failed after its retries
+    except KeyboardInterrupt:
+        STOP.set()
+        logger.warning("Ctrl-C received: stopping workers; pages on disk are kept for resume")
+        raise
     logger.info(f"Extract finished: {REQUEST_COUNT} API requests this run")
 
 
