@@ -32,7 +32,6 @@ def test_load() -> None:
         shutil.copytree(main.RAW_DIR / "dask__dask", Path(tmp) / "data" / "raw" / "dask__dask")
         main.RAW_DIR = Path(tmp) / "data" / "raw"
         main.LOADED_MARKER = main.RAW_DIR / "_LOADED"
-        main.LOG_DIR = Path(tmp) / "logs"
         main.DB_PATH = Path(tmp) / "test.duckdb"
 
         # 1. One row per record: table rows match the records in the files.

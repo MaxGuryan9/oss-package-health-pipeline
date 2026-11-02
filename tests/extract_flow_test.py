@@ -17,10 +17,10 @@ ENDPOINTS = {"commits", "pulls", "releases", "reviews"}
 
 def test_extract_flow() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        # Point every path at the temp folder so nothing lands in the real data/raw or logs/.
+        # Point data paths at the temp folder so nothing lands in the real data/raw.
+        # Log lines go to the real logs/extract.log (its handler is attached at import).
         main.RAW_DIR = Path(tmp) / "data" / "raw"
         main.LOADED_MARKER = main.RAW_DIR / "_LOADED"
-        main.LOG_DIR = Path(tmp) / "logs"
 
         first_run = main.extract(window_start=TEST_WINDOW)
 

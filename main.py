@@ -13,9 +13,7 @@ os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load")
 import duckdb
 import httpx
 from prefect import flow, task, unmapped
-from prefect.cache_policies import NO_CACHE
 from prefect.task_runners import ThreadPoolTaskRunner
-from prefect.tasks import exponential_backoff
 
 # --- Configuration ---
 REPOS = ["scikit-learn/scikit-learn", "dask/dask", "plotly/plotly.py"]
@@ -55,19 +53,18 @@ LOG_DIR = PROJECT_DIR / "logs"
 LOADED_MARKER = RAW_DIR / "_LOADED"
 DB_PATH = PROJECT_DIR / "packages.duckdb"
 
+# Prefect already puts a handler on the root logger, so attach a file handler to each logger directly.
+# Add a name here for each new task (dbt, validate, model, plot).
+LOG_DIR.mkdir(exist_ok=True)
+for name in ["extract", "load"]:
+    log = logging.getLogger(name)
+    log.setLevel(logging.INFO)
+    handler = logging.FileHandler(LOG_DIR / f"{name}.log")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    log.addHandler(handler)
+
 logger = logging.getLogger("extract")
 load_logger = logging.getLogger("load")
-
-
-def setup_file_log(name: str) -> None:
-    """Also write logger `name` to logs/<name>.log (README: each task gets its own log file)."""
-    log = logging.getLogger(name)
-    if not any(isinstance(h, logging.FileHandler) for h in log.handlers):
-        LOG_DIR.mkdir(exist_ok=True)
-        handler = logging.FileHandler(LOG_DIR / f"{name}.log")
-        handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
-        log.addHandler(handler)
-    log.setLevel(logging.INFO)
 
 
 # set your GH token before running
@@ -77,14 +74,6 @@ HEADERS = {
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": API_VERSION,
 }
-
-
-class TransientHTTPError(Exception):
-    """Temporary failure (rate limit, 5xx, network, bad JSON); Prefect should retry."""
-
-
-class PermanentHTTPError(Exception):
-    """Failure a retry cannot fix (bad token, bad URL); Prefect should not retry."""
 
 
 class RunInterrupted(Exception):
@@ -98,15 +87,12 @@ def pause(seconds: float) -> None:
 
 
 def github_get(url: str, params: dict | None = None) -> httpx.Response:
-    """GET one URL and check quota. Returns a 200 response; raises Transient/PermanentHTTPError otherwise."""
+    """GET one URL and check quota. Raises httpx.HTTPError on a failed request so Prefect retries the task."""
     with RATE_LOCK:
         pass  # if another thread is sleeping off the rate limit, wait here until it's done
     if STOP.is_set():
         raise RunInterrupted("Stopped by Ctrl-C")
-    try:
-        response = httpx.get(url, headers=HEADERS, params=params, timeout=REQUEST_TIMEOUT)
-    except httpx.TransportError as exc:
-        raise TransientHTTPError(f"Network error for {url}: {exc}") from exc
+    response = httpx.get(url, headers=HEADERS, params=params, timeout=REQUEST_TIMEOUT)
 
     # primary limit: once remaining <= buffer, sleep until the reset time (+5s margin)
     remaining = int(response.headers.get("X-RateLimit-Remaining", RATE_LIMIT_BUFFER + 1))
@@ -117,20 +103,15 @@ def github_get(url: str, params: dict | None = None) -> httpx.Response:
             logger.warning(f"Rate limit: {remaining} left; sleeping {wait:.0f}s until reset")
             pause(wait)
 
-    status = response.status_code
-    if status == 200:
-        return response
-    # secondary limit: GitHub says how many seconds to wait
-    if status in (403, 429) and "Retry-After" in response.headers:
+    # secondary limit: GitHub says how many seconds to wait before retrying
+    if response.status_code in (403, 429) and "Retry-After" in response.headers:
         wait = int(response.headers["Retry-After"])
+        logger.warning(f"Secondary rate limit {response.status_code}; sleeping {wait}s")
         with RATE_LOCK:
             pause(wait)
-        raise TransientHTTPError(f"Secondary rate limit {status} for {url}; waited {wait}s")
-    if status == 429 or (status == 403 and "rate limit" in response.text.lower()):
-        raise TransientHTTPError(f"Rate limit {status} for {url}: {response.text[:200]}")
-    if status >= 500:
-        raise TransientHTTPError(f"Server error {status} for {url}")
-    raise PermanentHTTPError(f"HTTP {status} for {url}: {response.text[:200]}")
+
+    response.raise_for_status()  # any 4xx/5xx raises httpx.HTTPStatusError
+    return response
 
 
 def landing_dir(repo: str, endpoint: str) -> Path:
@@ -185,11 +166,12 @@ def fetch_pages(
     requests = 0
     while url:
         requests += 1
-        response = github_get(url, params)
         try:
+            response = github_get(url, params)
             data = response.json()
-        except ValueError as exc:
-            raise TransientHTTPError(f"Invalid JSON from {response.url}: {response.text[:200]!r}") from exc
+        except (httpx.HTTPError, ValueError) as e:
+            logger.error(f"[{repo}] {endpoint} page {page} failed: {e}")
+            raise  # re-raise so Prefect's retries kick in
         next_url = response.links.get("next", {}).get("url")
         if stop_before and data and data[-1]["updated_at"] < stop_before:
             next_url = None  # sorted by updated desc: every later page is older than the window
@@ -244,27 +226,19 @@ def prepare_raw_dir() -> str:
     return "resume"
 
 
-def retry_if_transient(task, task_run, state) -> bool:
-    """Prefect retry condition: retry everything except PermanentHTTPError and Ctrl-C stops."""
+def not_after_ctrl_c(task, task_run, state) -> bool:
+    """Prefect retry condition: retry any failure except a Ctrl-C stop."""
     try:
         state.result()
-    except (PermanentHTTPError, RunInterrupted):
+    except RunInterrupted:
         return False
     except Exception:
         return True
     return True
 
 
-RETRY_SETTINGS = {
-    "retries": 5,
-    "retry_delay_seconds": exponential_backoff(backoff_factor=10),  # 10, 20, 40, 80, 160 s
-    "retry_jitter_factor": 0.5,
-    "retry_condition_fn": retry_if_transient,
-    "cache_policy": NO_CACHE,
-}
-
-
-@task(name="fetch-repo", task_run_name="{repo}", **RETRY_SETTINGS)
+@task(name="fetch-repo", task_run_name="{repo}", retries=3, retry_delay_seconds=[10, 30, 60],
+      retry_condition_fn=not_after_ctrl_c)
 def fetch_repo(repo: str, window_start: str) -> int:
     """All four endpoints for one repo: pulls, then their reviews, then commits and releases. Returns requests made."""
     prs, n_pulls = fetch_pages(repo, "pulls", PULLS_PARAMS, stop_before=window_start)
@@ -275,29 +249,6 @@ def fetch_repo(repo: str, window_start: str) -> int:
     logger.info(f"[{repo}] pulls {len(prs)}, reviews {len(reviews)}, commits {len(commits)}, "
                 f"releases {len(releases)}; {requests} requests")
     return requests
-
-
-def records_sql(spec: dict) -> str:
-    """SELECT one row per record from every landing file of one endpoint, in raw-table column order."""
-    return f"""
-        SELECT repo, {spec['id']} AS id, {spec['updated_at']} AS updated_at, fetched_at,
-               filename AS source_file, rec AS payload
-        FROM (SELECT repo, fetched_at, filename, unnest(data) AS rec
-              FROM read_json('{RAW_DIR}/{spec['files']}',
-                             columns = {{repo: 'VARCHAR', fetched_at: 'TIMESTAMP', data: 'JSON[]'}},
-                             filename = true))
-    """
-
-
-def find_duplicates(con: duckdb.DuckDBPyConnection, spec: dict) -> list[tuple]:
-    """(repo, id, copies, files) for every (repo, id) that appears more than once in the landing files."""
-    return con.execute(f"""
-        SELECT repo, id, count(*) AS copies, list(source_file ORDER BY source_file) AS files
-        FROM ({records_sql(spec)})
-        GROUP BY repo, id
-        HAVING count(*) > 1
-        ORDER BY repo, id
-    """).fetchall()
 
 
 def load_table(con: duckdb.DuckDBPyConnection, endpoint: str) -> int:
@@ -315,13 +266,16 @@ def load_table(con: duckdb.DuckDBPyConnection, endpoint: str) -> int:
         load_logger.info(f"{table}: no landing files, {before} rows unchanged")
         return before
 
-    duplicates = find_duplicates(con, spec)
-    if duplicates:
-        load_logger.warning(f"{table}: {len(duplicates)} keys appear more than once in data/raw (first 10 below)")
-        for repo, key, copies, files in duplicates[:10]:
-            load_logger.warning(f"  {repo} id={key} x{copies}: {', '.join(files)}")
-
-    con.execute(f"INSERT OR REPLACE INTO {table} {records_sql(spec)}")
+    # one row per record: unnest each file's "data" list, then pull out the key and updated_at
+    con.execute(f"""
+        INSERT OR REPLACE INTO {table}
+        SELECT repo, {spec['id']} AS id, {spec['updated_at']} AS updated_at, fetched_at,
+               filename AS source_file, rec AS payload
+        FROM (SELECT repo, fetched_at, filename, unnest(data) AS rec
+              FROM read_json('{RAW_DIR}/{spec['files']}',
+                             columns = {{repo: 'VARCHAR', fetched_at: 'TIMESTAMP', data: 'JSON[]'}},
+                             filename = true))
+    """)
     after = con.execute(f"SELECT count(*) FROM {table}").fetchall()[0][0]
     load_logger.info(f"{table}: {before} rows before, {after} after")
     return after
@@ -343,13 +297,13 @@ def write_load_state(con: duckdb.DuckDBPyConnection) -> None:
         """, [loaded_at])
 
 
-@task(name="load-table", task_run_name="load {endpoint}", cache_policy=NO_CACHE)
+@task(name="load-table", task_run_name="load {endpoint}")
 def load_table_task(endpoint: str) -> int:
     with duckdb.connect(DB_PATH) as con:
         return load_table(con, endpoint)
 
 
-@task(name="finish-load", cache_policy=NO_CACHE)
+@task(name="finish-load")
 def finish_load_task() -> None:
     """README Task 2: update _load_state only after every table loaded, then create the _LOADED marker."""
     with duckdb.connect(DB_PATH) as con:
@@ -362,7 +316,6 @@ def finish_load_task() -> None:
 def extract(window_start: str = WINDOW_START) -> int:
     """Task 1: pull commits, PRs, reviews, and releases for all repos to data/raw/. Returns requests made."""
     STOP.clear()
-    setup_file_log("extract")
     mode = prepare_raw_dir()
     logger.info(f"Extract starting ({mode}): {len(REPOS)} repos, window from {window_start}")
     try:
@@ -380,7 +333,6 @@ def extract(window_start: str = WINDOW_START) -> int:
 @flow(name="load")
 def load() -> None:
     """Task 2: upsert data/raw/ into raw_* tables in packages.duckdb. Never calls the API."""
-    setup_file_log("load")
     load_logger.info(f"Load starting: {RAW_DIR} -> {DB_PATH}")
     for endpoint in LOAD_SPECS:  # one at a time: DuckDB allows a single writer
         load_table_task(endpoint)

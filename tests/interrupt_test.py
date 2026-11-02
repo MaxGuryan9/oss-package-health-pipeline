@@ -22,10 +22,10 @@ MAX_STOP_SECONDS = 5.0
 
 def test_interrupt() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        # Point every path at the temp folder so nothing lands in the real data/raw or logs/.
+        # Point data paths at the temp folder so nothing lands in the real data/raw.
+        # Log lines go to the real logs/extract.log (its handler is attached at import).
         main.RAW_DIR = Path(tmp) / "data" / "raw"
         main.LOADED_MARKER = main.RAW_DIR / "_LOADED"
-        main.LOG_DIR = Path(tmp) / "logs"
 
         sent_at = {}
 

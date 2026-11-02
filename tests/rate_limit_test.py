@@ -36,14 +36,14 @@ def fake_get(status: int, headers: dict | None = None, body: str = "[]", network
     return get
 
 
-def expect_error(error_type, get) -> str:
-    """Call github_get with a fake httpx.get and confirm it raises error_type. Returns the error message."""
+def expect_error(get) -> str:
+    """Call github_get with a fake httpx.get and confirm it raises an httpx error. Returns the error message."""
     main.httpx.get = get
     try:
         main.github_get(URL)
-    except error_type as exc:
+    except httpx.HTTPError as exc:
         return str(exc)
-    raise AssertionError(f"Expected {error_type.__name__}")
+    raise AssertionError("Expected an httpx.HTTPError")
 
 
 def test_rate_limit_and_errors() -> None:
@@ -62,33 +62,30 @@ def test_rate_limit_and_errors() -> None:
     print(f"2. 200, remaining 3       -> slept {SLEEPS[0]:.0f}s until reset, returned")
 
     SLEEPS.clear()
-    msg = expect_error(main.TransientHTTPError, fake_get(429, {"Retry-After": "30"}))
+    msg = expect_error(fake_get(429, {"Retry-After": "30"}))
     assert SLEEPS == [30], f"Expected a 30s Retry-After sleep, got {SLEEPS}"
-    print(f"3. 429, Retry-After 30    -> slept 30s, Transient: {msg}")
+    print(f"3. 429, Retry-After 30    -> slept 30s, raised: {msg[:60]}")
 
-    msg = expect_error(main.TransientHTTPError, fake_get(403, body='{"message": "API rate limit exceeded"}'))
-    print(f"4. 403, rate limit body   -> Transient: {msg[:60]}")
+    msg = expect_error(fake_get(403, body='{"message": "API rate limit exceeded"}'))
+    print(f"4. 403                    -> raised: {msg[:60]}")
 
-    msg = expect_error(main.PermanentHTTPError, fake_get(403, body='{"message": "Resource not accessible"}'))
-    print(f"5. 403, permission body   -> Permanent: {msg[:60]}")
+    msg = expect_error(fake_get(502))
+    print(f"5. 502                    -> raised: {msg[:60]}")
 
-    msg = expect_error(main.TransientHTTPError, fake_get(502))
-    print(f"6. 502                    -> Transient: {msg}")
+    msg = expect_error(fake_get(404, body='{"message": "Not Found"}'))
+    print(f"6. 404                    -> raised: {msg[:60]}")
 
-    msg = expect_error(main.PermanentHTTPError, fake_get(404, body='{"message": "Not Found"}'))
-    print(f"7. 404                    -> Permanent: {msg[:60]}")
-
-    msg = expect_error(main.TransientHTTPError, fake_get(200, network_error=True))
-    print(f"8. connection error       -> Transient: {msg[:60]}")
+    msg = expect_error(fake_get(200, network_error=True))
+    print(f"7. connection error       -> raised: {msg[:60]}")
 
     with tempfile.TemporaryDirectory() as tmp:
         main.httpx.get = fake_get(200, body="<html>not json")
         try:
             main.fetch_pages("dask/dask", "commits", {}, out_dir=Path(tmp))
-        except main.TransientHTTPError as exc:
-            print(f"9. 200, broken JSON body  -> Transient: {str(exc)[:60]}")
+        except ValueError as exc:
+            print(f"8. 200, broken JSON body  -> ValueError: {str(exc)[:60]}")
         else:
-            raise AssertionError("Expected TransientHTTPError for a broken JSON body")
+            raise AssertionError("Expected ValueError for a broken JSON body")
 
     sent = []
     main.STOP.set()
@@ -97,7 +94,7 @@ def test_rate_limit_and_errors() -> None:
         main.github_get(URL)
     except main.RunInterrupted:
         assert sent == [], "A request was sent after STOP was set"
-        print("10. STOP set (Ctrl-C)      -> RunInterrupted, no request sent")
+        print("9. STOP set (Ctrl-C)       -> RunInterrupted, no request sent")
     else:
         raise AssertionError("Expected RunInterrupted when STOP is set")
     finally:
