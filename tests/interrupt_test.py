@@ -26,6 +26,7 @@ def test_interrupt() -> None:
         # Log lines go to the real logs/extract.log (its handler is attached at import).
         main.RAW_DIR = Path(tmp) / "data" / "raw"
         main.LOADED_MARKER = main.RAW_DIR / "_LOADED"
+        main.DB_PATH = Path(tmp) / "test.duckdb"
 
         sent_at = {}
 

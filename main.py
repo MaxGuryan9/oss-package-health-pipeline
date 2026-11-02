@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import shutil
 import threading
 import time
 from datetime import datetime, timezone
@@ -49,6 +48,7 @@ LOAD_SPECS = {
 
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
+ARCHIVE_DIR = PROJECT_DIR / "data" / "archive"
 LOG_DIR = PROJECT_DIR / "logs"
 LOADED_MARKER = RAW_DIR / "_LOADED"
 DB_PATH = PROJECT_DIR / "packages.duckdb"
@@ -219,11 +219,31 @@ def fetch_reviews(
 
 
 def prepare_raw_dir() -> str:
-    """README 'Resume or start fresh?': _LOADED present means data/raw is in DuckDB, so start over."""
+    """README 'Resume or start fresh?': _LOADED present means data/raw is in DuckDB.
+    Move it to data/archive/raw_<UTC time>/ (instead of deleting it) and start fresh."""
     if LOADED_MARKER.exists():
-        shutil.rmtree(RAW_DIR)
+        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        RAW_DIR.rename(ARCHIVE_DIR / f"raw_{stamp}")
+        logger.info(f"Moved loaded files to {ARCHIVE_DIR / f'raw_{stamp}'}")
         return "fresh"
     return "resume"
+
+
+def read_watermarks() -> dict:
+    """{(repo, endpoint): newest updated_at loaded} from _load_state; empty before the first load."""
+    if not DB_PATH.exists():
+        return {}
+    try:
+        with duckdb.connect(DB_PATH) as con:
+            rows = con.execute("SELECT repo, endpoint, max_updated_at FROM _load_state "
+                               "WHERE endpoint IN ('commits', 'pulls')").fetchall()
+    except duckdb.Error:
+        return {}  # database exists but no load has finished yet
+    watermarks = {}
+    for repo, endpoint, ts in rows:
+        watermarks[(repo, endpoint)] = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return watermarks
 
 
 def not_after_ctrl_c(task, task_run, state) -> bool:
@@ -239,11 +259,14 @@ def not_after_ctrl_c(task, task_run, state) -> bool:
 
 @task(name="fetch-repo", task_run_name="{repo}", retries=3, retry_delay_seconds=[10, 30, 60],
       retry_condition_fn=not_after_ctrl_c)
-def fetch_repo(repo: str, window_start: str) -> int:
+def fetch_repo(repo: str, commits_since: str, pulls_since: str, window_start: str) -> int:
     """All four endpoints for one repo: pulls, then their reviews, then commits and releases. Returns requests made."""
-    prs, n_pulls = fetch_pages(repo, "pulls", PULLS_PARAMS, stop_before=window_start)
-    reviews, n_reviews = fetch_reviews(repo, prs, created_since=window_start)
-    commits, n_commits = fetch_pages(repo, "commits", {"since": window_start})
+    logger.info(f"[{repo}] commits since {commits_since}, pulls updated since {pulls_since}")
+    prs, n_pulls = fetch_pages(repo, "pulls", PULLS_PARAMS, stop_before=pulls_since)
+    # review calls only for PRs updated since the watermark (README Task 2, incremental loads)
+    updated = [pr for pr in prs if pr["updated_at"] >= pulls_since]
+    reviews, n_reviews = fetch_reviews(repo, updated, created_since=window_start)
+    commits, n_commits = fetch_pages(repo, "commits", {"since": commits_since})
     releases, n_releases = fetch_pages(repo, "releases", {})
     requests = n_pulls + n_reviews + n_commits + n_releases
     logger.info(f"[{repo}] pulls {len(prs)}, reviews {len(reviews)}, commits {len(commits)}, "
@@ -317,10 +340,14 @@ def extract(window_start: str = WINDOW_START) -> int:
     """Task 1: pull commits, PRs, reviews, and releases for all repos to data/raw/. Returns requests made."""
     STOP.clear()
     mode = prepare_raw_dir()
+    watermarks = read_watermarks()
     logger.info(f"Extract starting ({mode}): {len(REPOS)} repos, window from {window_start}")
+    # incremental: fetch commits and pulls only since the newest ones already loaded (README Task 2)
+    commits_since = [watermarks.get((r, "commits"), window_start) for r in REPOS]
+    pulls_since = [watermarks.get((r, "pulls"), window_start) for r in REPOS]
     try:
         # one task per repo, run in parallel; .result() raises if any repo failed after its retries
-        counts = fetch_repo.map(REPOS, unmapped(window_start)).result()
+        counts = fetch_repo.map(REPOS, commits_since, pulls_since, unmapped(window_start)).result()
     except KeyboardInterrupt:
         STOP.set()
         logger.warning("Ctrl-C received: stopping workers; pages on disk are kept for resume")
@@ -342,6 +369,7 @@ def load() -> None:
 @flow(name="rhk2dx-package-health-flow")
 def package_health_flow() -> None:
     extract()
+    load()
 
 
 if __name__ == "__main__":
