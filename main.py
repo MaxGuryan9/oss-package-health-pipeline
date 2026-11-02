@@ -12,7 +12,7 @@ os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load")
 
 import duckdb
 import httpx
-from prefect import flow, task
+from prefect import flow, task, unmapped
 from prefect.cache_policies import NO_CACHE
 from prefect.task_runners import ThreadPoolTaskRunner
 from prefect.tasks import exponential_backoff
@@ -26,10 +26,7 @@ API_VERSION = "2026-03-10"
 REQUEST_TIMEOUT = 30.0
 RATE_LIMIT_BUFFER = 25
 RATE_LOCK = threading.Lock()  # shared by parallel repo fetches: one token, one budget
-COUNT_LOCK = threading.Lock()
 STOP = threading.Event()  # set on Ctrl-C so worker threads stop at their next request or sleep
-REQUEST_COUNT = 0  # API requests sent this run
-LAST_REMAINING = "?"  # X-RateLimit-Remaining from the latest response, for the progress log
 PULLS_PARAMS = {"state": "all", "sort": "updated", "direction": "desc"}
 
 # Task 2: one raw table per endpoint. "id" and "updated_at" are DuckDB expressions on each record (rec).
@@ -73,24 +70,13 @@ def setup_file_log(name: str) -> None:
     log.setLevel(logging.INFO)
 
 
-def get_token() -> str:
-    """Read the GitHub PAT from the GH_PAT environment variable."""
-    token = os.environ.get("GH_PAT")
-    if not token:
-        raise RuntimeError("GH_PAT environment variable is not set")
-    return token
-
-
+# set your GH token before running
+TOKEN = os.environ["GH_PAT"]
 HEADERS = {
-    "Authorization": f"Bearer {get_token()}",
+    "Authorization": f"Bearer {TOKEN}",
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": API_VERSION,
 }
-
-
-def make_client() -> httpx.Client:
-    """HTTP client with GitHub auth and API headers set once."""
-    return httpx.Client(headers=HEADERS, timeout=REQUEST_TIMEOUT)
 
 
 class TransientHTTPError(Exception):
@@ -111,41 +97,30 @@ def pause(seconds: float) -> None:
         raise RunInterrupted("Stopped by Ctrl-C")
 
 
-def wait_for_rate_limit(response: httpx.Response) -> None:
-    """Primary limit: once remaining <= buffer, sleep until the reset time."""
-    global LAST_REMAINING
-    remaining = response.headers.get("X-RateLimit-Remaining")
-    reset = response.headers.get("X-RateLimit-Reset")
-    if remaining is not None:
-        LAST_REMAINING = remaining
-    if remaining is None or reset is None or int(remaining) > RATE_LIMIT_BUFFER:
-        return
-    with RATE_LOCK:
-        delay = int(reset) + 5 - time.time()
-        if delay > 0:
-            logger.warning(f"Rate limit: {remaining} left; sleeping {delay:.0f}s until reset")
-            pause(delay)
-
-
-def github_get(client: httpx.Client, url: str, params: dict | None = None) -> httpx.Response:
-    """GET one URL. Returns a 200 response; raises Transient/PermanentHTTPError otherwise."""
-    global REQUEST_COUNT
+def github_get(url: str, params: dict | None = None) -> httpx.Response:
+    """GET one URL and check quota. Returns a 200 response; raises Transient/PermanentHTTPError otherwise."""
     with RATE_LOCK:
         pass  # if another thread is sleeping off the rate limit, wait here until it's done
     if STOP.is_set():
         raise RunInterrupted("Stopped by Ctrl-C")
     try:
-        response = client.get(url, params=params)
+        response = httpx.get(url, headers=HEADERS, params=params, timeout=REQUEST_TIMEOUT)
     except httpx.TransportError as exc:
         raise TransientHTTPError(f"Network error for {url}: {exc}") from exc
-    with COUNT_LOCK:
-        REQUEST_COUNT += 1
 
-    wait_for_rate_limit(response)
+    # primary limit: once remaining <= buffer, sleep until the reset time (+5s margin)
+    remaining = int(response.headers.get("X-RateLimit-Remaining", RATE_LIMIT_BUFFER + 1))
+    reset = int(response.headers.get("X-RateLimit-Reset", time.time()))
+    if remaining <= RATE_LIMIT_BUFFER:
+        with RATE_LOCK:  # holding the lock pauses every other thread too
+            wait = max(reset - time.time(), 0) + 5
+            logger.warning(f"Rate limit: {remaining} left; sleeping {wait:.0f}s until reset")
+            pause(wait)
 
     status = response.status_code
     if status == 200:
         return response
+    # secondary limit: GitHub says how many seconds to wait
     if status in (403, 429) and "Retry-After" in response.headers:
         wait = int(response.headers["Retry-After"])
         with RATE_LOCK:
@@ -172,7 +147,6 @@ def write_page(file_path: Path, body: dict) -> None:
 
 
 def fetch_pages(
-    client: httpx.Client,
     repo: str,
     endpoint: str,
     params: dict,
@@ -180,8 +154,8 @@ def fetch_pages(
     out_dir: Path | None = None,
     stop_before: str | None = None,
     quiet: bool = False,
-) -> list[dict]:
-    """Fetch every page of one endpoint, write each to a landing file, return all records.
+) -> tuple[list[dict], int]:
+    """Fetch every page of one endpoint, write each to a landing file. Returns (all records, requests made).
 
     Resumes from pages already on disk: their records are read back and fetching
     continues from the last page's saved next_url (None means already complete).
@@ -208,8 +182,10 @@ def fetch_pages(
         status = "already complete" if url is None else f"resuming at page {page}"
         logger.info(f"[{repo}] {endpoint}: {len(pages)} pages on disk, {status}")
 
+    requests = 0
     while url:
-        response = github_get(client, url, params)
+        requests += 1
+        response = github_get(url, params)
         try:
             data = response.json()
         except ValueError as exc:
@@ -227,35 +203,37 @@ def fetch_pages(
             "data": data,
         })
         if not quiet:
-            logger.info(f"[{repo}] {endpoint} page {page}: {len(data)} records (budget left {LAST_REMAINING})")
+            remaining = response.headers.get("X-RateLimit-Remaining", "?")
+            logger.info(f"[{repo}] {endpoint} page {page}: {len(data)} records (budget left {remaining})")
         records.extend(data)
         url = next_url
         params = None
         page += 1
-    return records
+    return records, requests
 
 
 def fetch_reviews(
-    client: httpx.Client,
     repo: str,
     prs: list[dict],
     created_since: str = WINDOW_START,
     out_dir: Path | None = None,
-) -> list[dict]:
-    """One reviews call per PR created in the window, merged or not (README Task 1)."""
+) -> tuple[list[dict], int]:
+    """One reviews call per PR created in the window, merged or not (README Task 1). Returns (reviews, requests)."""
     out_dir = out_dir or landing_dir(repo, "reviews")
     # Dict by number drops PRs listed twice (a resumed pulls fetch can repeat one at a page boundary).
     in_window = {pr["number"]: pr for pr in prs if pr["created_at"] >= created_since}
     total = len(in_window)
     reviews = []
+    requests = 0
     for i, n in enumerate(in_window, start=1):
-        reviews.extend(fetch_pages(
-            client, repo, "reviews", {},
-            path=f"pulls/{n}/reviews", out_dir=out_dir / f"pr_{n}", quiet=True,
-        ))
+        records, used = fetch_pages(
+            repo, "reviews", {}, path=f"pulls/{n}/reviews", out_dir=out_dir / f"pr_{n}", quiet=True,
+        )
+        reviews.extend(records)
+        requests += used
         if i % 25 == 0 or i == total:
-            logger.info(f"[{repo}] reviews: {i}/{total} PRs ({i / total:.0%}), budget left {LAST_REMAINING}")
-    return reviews
+            logger.info(f"[{repo}] reviews: {i}/{total} PRs ({i / total:.0%})")
+    return reviews, requests
 
 
 def prepare_raw_dir() -> str:
@@ -286,22 +264,17 @@ RETRY_SETTINGS = {
 }
 
 
-@task(name="fetch-endpoint", task_run_name="{repo} {endpoint}", **RETRY_SETTINGS)
-def fetch_endpoint(repo: str, endpoint: str, params: dict, stop_before: str | None = None) -> list[dict]:
-    """One (repo, endpoint): fetch all pages and log the record count."""
-    with make_client() as client:
-        records = fetch_pages(client, repo, endpoint, params, stop_before=stop_before)
-    logger.info(f"[{repo}] {endpoint}: {len(records)} records")
-    return records
-
-
-@task(name="fetch-reviews", task_run_name="{repo} reviews", **RETRY_SETTINGS)
-def fetch_reviews_task(repo: str, prs: list[dict], created_since: str) -> list[dict]:
-    """Reviews for one repo: one call per PR created in the window."""
-    with make_client() as client:
-        reviews = fetch_reviews(client, repo, prs, created_since=created_since)
-    logger.info(f"[{repo}] reviews: {len(reviews)} records")
-    return reviews
+@task(name="fetch-repo", task_run_name="{repo}", **RETRY_SETTINGS)
+def fetch_repo(repo: str, window_start: str) -> int:
+    """All four endpoints for one repo: pulls, then their reviews, then commits and releases. Returns requests made."""
+    prs, n_pulls = fetch_pages(repo, "pulls", PULLS_PARAMS, stop_before=window_start)
+    reviews, n_reviews = fetch_reviews(repo, prs, created_since=window_start)
+    commits, n_commits = fetch_pages(repo, "commits", {"since": window_start})
+    releases, n_releases = fetch_pages(repo, "releases", {})
+    requests = n_pulls + n_reviews + n_commits + n_releases
+    logger.info(f"[{repo}] pulls {len(prs)}, reviews {len(reviews)}, commits {len(commits)}, "
+                f"releases {len(releases)}; {requests} requests")
+    return requests
 
 
 def records_sql(spec: dict) -> str:
@@ -385,29 +358,23 @@ def finish_load_task() -> None:
     load_logger.info(f"_load_state updated; created {LOADED_MARKER}")
 
 
-@flow(name="extract", task_runner=ThreadPoolTaskRunner(max_workers=3))
-def extract(window_start: str = WINDOW_START) -> None:
-    """Task 1: pull commits, PRs, reviews, and releases for all repos to data/raw/."""
-    global REQUEST_COUNT
-    REQUEST_COUNT = 0
+@flow(name="extract", task_runner=ThreadPoolTaskRunner(max_workers=len(REPOS)))
+def extract(window_start: str = WINDOW_START) -> int:
+    """Task 1: pull commits, PRs, reviews, and releases for all repos to data/raw/. Returns requests made."""
     STOP.clear()
     setup_file_log("extract")
     mode = prepare_raw_dir()
     logger.info(f"Extract starting ({mode}): {len(REPOS)} repos, window from {window_start}")
-
-    pulls = {r: fetch_endpoint.submit(r, "pulls", PULLS_PARAMS, stop_before=window_start) for r in REPOS}
-    others = [fetch_endpoint.submit(r, "commits", {"since": window_start}) for r in REPOS]
-    others += [fetch_endpoint.submit(r, "releases", {}) for r in REPOS]
-    reviews = [fetch_reviews_task.submit(r, pulls[r], window_start) for r in REPOS]
-
     try:
-        for future in [*pulls.values(), *others, *reviews]:
-            future.result()  # raises if any task failed after its retries
+        # one task per repo, run in parallel; .result() raises if any repo failed after its retries
+        counts = fetch_repo.map(REPOS, unmapped(window_start)).result()
     except KeyboardInterrupt:
         STOP.set()
         logger.warning("Ctrl-C received: stopping workers; pages on disk are kept for resume")
         raise
-    logger.info(f"Extract finished: {REQUEST_COUNT} API requests this run")
+    total = sum(counts)
+    logger.info(f"Extract finished: {total} API requests this run")
+    return total
 
 
 @flow(name="load")

@@ -26,19 +26,21 @@ def fake_sleep(seconds: float) -> None:
 main.pause = fake_sleep
 
 
-def fake_client(status: int, headers: dict | None = None, body: str = "[]", network_error: bool = False):
-    """httpx client whose every request returns the given response (or a connection error)."""
-    def handler(request: httpx.Request) -> httpx.Response:
+def fake_get(status: int, headers: dict | None = None, body: str = "[]", network_error: bool = False):
+    """Stand-in for httpx.get that returns the given response (or a connection error)."""
+    def get(url, **kwargs):
+        request = httpx.Request("GET", url)
         if network_error:
             raise httpx.ConnectError("connection refused", request=request)
-        return httpx.Response(status, headers=headers or {}, text=body)
-    return httpx.Client(transport=httpx.MockTransport(handler))
+        return httpx.Response(status, headers=headers or {}, text=body, request=request)
+    return get
 
 
-def expect_error(error_type, client) -> str:
-    """Call github_get and confirm it raises error_type. Returns the error message."""
+def expect_error(error_type, get) -> str:
+    """Call github_get with a fake httpx.get and confirm it raises error_type. Returns the error message."""
+    main.httpx.get = get
     try:
-        main.github_get(client, URL)
+        main.github_get(URL)
     except error_type as exc:
         return str(exc)
     raise AssertionError(f"Expected {error_type.__name__}")
@@ -48,38 +50,41 @@ def test_rate_limit_and_errors() -> None:
     reset_in_60s = str(int(time.time()) + 60)
 
     SLEEPS.clear()
-    main.github_get(fake_client(200, {"X-RateLimit-Remaining": "100", "X-RateLimit-Reset": reset_in_60s}), URL)
+    main.httpx.get = fake_get(200, {"X-RateLimit-Remaining": "100", "X-RateLimit-Reset": reset_in_60s})
+    main.github_get(URL)
     assert SLEEPS == [], f"Slept with plenty of budget: {SLEEPS}"
     print("1. 200, remaining 100     -> returned, no sleep")
 
     SLEEPS.clear()
-    main.github_get(fake_client(200, {"X-RateLimit-Remaining": "3", "X-RateLimit-Reset": reset_in_60s}), URL)
+    main.httpx.get = fake_get(200, {"X-RateLimit-Remaining": "3", "X-RateLimit-Reset": reset_in_60s})
+    main.github_get(URL)
     assert len(SLEEPS) == 1 and 60 < SLEEPS[0] <= 65, f"Expected one ~65s sleep, got {SLEEPS}"
     print(f"2. 200, remaining 3       -> slept {SLEEPS[0]:.0f}s until reset, returned")
 
     SLEEPS.clear()
-    msg = expect_error(main.TransientHTTPError, fake_client(429, {"Retry-After": "30"}))
+    msg = expect_error(main.TransientHTTPError, fake_get(429, {"Retry-After": "30"}))
     assert SLEEPS == [30], f"Expected a 30s Retry-After sleep, got {SLEEPS}"
     print(f"3. 429, Retry-After 30    -> slept 30s, Transient: {msg}")
 
-    msg = expect_error(main.TransientHTTPError, fake_client(403, body='{"message": "API rate limit exceeded"}'))
+    msg = expect_error(main.TransientHTTPError, fake_get(403, body='{"message": "API rate limit exceeded"}'))
     print(f"4. 403, rate limit body   -> Transient: {msg[:60]}")
 
-    msg = expect_error(main.PermanentHTTPError, fake_client(403, body='{"message": "Resource not accessible"}'))
+    msg = expect_error(main.PermanentHTTPError, fake_get(403, body='{"message": "Resource not accessible"}'))
     print(f"5. 403, permission body   -> Permanent: {msg[:60]}")
 
-    msg = expect_error(main.TransientHTTPError, fake_client(502))
+    msg = expect_error(main.TransientHTTPError, fake_get(502))
     print(f"6. 502                    -> Transient: {msg}")
 
-    msg = expect_error(main.PermanentHTTPError, fake_client(404, body='{"message": "Not Found"}'))
+    msg = expect_error(main.PermanentHTTPError, fake_get(404, body='{"message": "Not Found"}'))
     print(f"7. 404                    -> Permanent: {msg[:60]}")
 
-    msg = expect_error(main.TransientHTTPError, fake_client(200, network_error=True))
+    msg = expect_error(main.TransientHTTPError, fake_get(200, network_error=True))
     print(f"8. connection error       -> Transient: {msg[:60]}")
 
     with tempfile.TemporaryDirectory() as tmp:
+        main.httpx.get = fake_get(200, body="<html>not json")
         try:
-            main.fetch_pages(fake_client(200, body="<html>not json"), "dask/dask", "commits", {}, out_dir=Path(tmp))
+            main.fetch_pages("dask/dask", "commits", {}, out_dir=Path(tmp))
         except main.TransientHTTPError as exc:
             print(f"9. 200, broken JSON body  -> Transient: {str(exc)[:60]}")
         else:
@@ -87,9 +92,9 @@ def test_rate_limit_and_errors() -> None:
 
     sent = []
     main.STOP.set()
-    client = httpx.Client(transport=httpx.MockTransport(lambda req: sent.append(req) or httpx.Response(200)))
+    main.httpx.get = lambda url, **kw: sent.append(url) or httpx.Response(200)
     try:
-        main.github_get(client, URL)
+        main.github_get(URL)
     except main.RunInterrupted:
         assert sent == [], "A request was sent after STOP was set"
         print("10. STOP set (Ctrl-C)      -> RunInterrupted, no request sent")

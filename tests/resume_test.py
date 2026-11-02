@@ -25,23 +25,23 @@ def counting_github_get(*args, **kwargs):
 main.github_get = counting_github_get
 
 
-def fetch(client, out_dir: Path) -> tuple[list[dict], int]:
+def fetch(out_dir: Path) -> tuple[list[dict], int]:
     """Run fetch_pages and return (records, requests used)."""
     global REQUEST_COUNT
     REQUEST_COUNT = 0
-    records = main.fetch_pages(
-        client, "dask/dask", "commits", {"since": "2026-06-01T00:00:00Z"}, out_dir=out_dir
+    records, _ = main.fetch_pages(
+        "dask/dask", "commits", {"since": "2026-06-01T00:00:00Z"}, out_dir=out_dir
     )
     return records, REQUEST_COUNT
 
 
 def test_resume() -> None:
     main.PER_PAGE = 10  # small pages force several landing files
-    with tempfile.TemporaryDirectory() as tmp, main.make_client() as client:
+    with tempfile.TemporaryDirectory() as tmp:
         out_dir = Path(tmp)
 
         # 1. Full fetch.
-        full, n = fetch(client, out_dir)
+        full, n = fetch(out_dir)
         pages = len(list(out_dir.glob("page_*.json")))
         print(f"1. Full fetch:      {len(full)} records, {pages} pages, {n} requests")
         assert n == pages
@@ -53,7 +53,7 @@ def test_resume() -> None:
         print(f"2. Simulated crash: deleted pages {pages - 1}-{pages}, wrote a half-written .tmp")
 
         # 3. Resume: only the 2 missing pages are fetched.
-        resumed, n = fetch(client, out_dir)
+        resumed, n = fetch(out_dir)
         print(f"3. Resume:          {len(resumed)} records, {n} requests")
         assert n == 2, f"Expected 2 requests on resume, got {n}"
         assert [r["sha"] for r in resumed] == [r["sha"] for r in full], "Resumed records differ"
@@ -61,7 +61,7 @@ def test_resume() -> None:
         assert not list(out_dir.glob("*.tmp")), "Leftover .tmp file"
 
         # 4. Rerun on a finished endpoint: nothing to fetch.
-        again, n = fetch(client, out_dir)
+        again, n = fetch(out_dir)
         print(f"4. Rerun complete:  {len(again)} records, {n} requests")
         assert n == 0, f"Expected 0 requests on a finished endpoint, got {n}"
         assert len(again) == len(full)

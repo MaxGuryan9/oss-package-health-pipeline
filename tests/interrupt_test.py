@@ -41,7 +41,7 @@ def test_interrupt() -> None:
         else:
             raise AssertionError("extract finished before the Ctrl-C; move TEST_WINDOW earlier")
 
-        print(f"\nStopped {stopped_in:.1f}s after Ctrl-C, {main.REQUEST_COUNT} requests sent")
+        print(f"\nStopped {stopped_in:.1f}s after Ctrl-C")
         assert stopped_in < MAX_STOP_SECONDS, f"Took {stopped_in:.1f}s to stop (limit {MAX_STOP_SECONDS}s)"
         assert not list(main.RAW_DIR.rglob("*.tmp")), "Leftover .tmp files"
         log_text = (main.LOG_DIR / "extract.log").read_text()

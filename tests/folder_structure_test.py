@@ -23,14 +23,14 @@ def test_folder_structure(keep: bool = False) -> None:
     assert main.landing_dir("dask/dask", "commits") == main.RAW_DIR / "dask__dask" / "commits"
 
     main.PER_PAGE = 10  # small pages force several landing files
-    with tempfile.TemporaryDirectory() as tmp, main.make_client() as client:
+    with tempfile.TemporaryDirectory() as tmp:
         if keep:
             shutil.rmtree(KEEP_DIR, ignore_errors=True)  # clear the last run so old pages can't mix in
             out_dir = KEEP_DIR / "dask__dask" / "commits"
         else:
             out_dir = Path(tmp)
-        records = main.fetch_pages(
-            client, "dask/dask", "commits", {"since": "2026-06-01T00:00:00Z"}, out_dir=out_dir
+        records, _ = main.fetch_pages(
+            "dask/dask", "commits", {"since": "2026-06-01T00:00:00Z"}, out_dir=out_dir
         )
 
         files = sorted(out_dir.glob("page_*.json"))

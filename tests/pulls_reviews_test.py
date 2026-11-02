@@ -29,21 +29,21 @@ def counting_github_get(*args, **kwargs):
 main.github_get = counting_github_get
 
 
-def fetch_both(client, pulls_dir: Path, reviews_dir: Path) -> tuple[list[dict], list[dict], int]:
+def fetch_both(pulls_dir: Path, reviews_dir: Path) -> tuple[list[dict], list[dict], int]:
     """Run the pulls fetch and the review fetch; return (prs, reviews, requests used)."""
     global REQUEST_COUNT
     REQUEST_COUNT = 0
-    prs = main.fetch_pages(client, "dask/dask", "pulls", PULLS_PARAMS, out_dir=pulls_dir, stop_before=CUTOFF)
-    reviews = main.fetch_reviews(client, "dask/dask", prs, created_since=CUTOFF, out_dir=reviews_dir)
+    prs, _ = main.fetch_pages("dask/dask", "pulls", PULLS_PARAMS, out_dir=pulls_dir, stop_before=CUTOFF)
+    reviews, _ = main.fetch_reviews("dask/dask", prs, created_since=CUTOFF, out_dir=reviews_dir)
     return prs, reviews, REQUEST_COUNT
 
 
 def test_pulls_and_reviews() -> None:
     main.PER_PAGE = 10  # small pages force several pulls pages
-    with tempfile.TemporaryDirectory() as tmp, main.make_client() as client:
+    with tempfile.TemporaryDirectory() as tmp:
         pulls_dir = Path(tmp) / "pulls"
         reviews_dir = Path(tmp) / "reviews"
-        prs, reviews, n = fetch_both(client, pulls_dir, reviews_dir)
+        prs, reviews, n = fetch_both(pulls_dir, reviews_dir)
 
         # 1. Pulls stop date.
         pages = [json.loads(f.read_text()) for f in sorted(pulls_dir.glob("page_*.json"))]
@@ -64,7 +64,7 @@ def test_pulls_and_reviews() -> None:
         print(f"   total requests: {n}")
 
         # 3. Rerun: everything is on disk, so nothing is fetched.
-        prs2, reviews2, n2 = fetch_both(client, pulls_dir, reviews_dir)
+        prs2, reviews2, n2 = fetch_both(pulls_dir, reviews_dir)
         print(f"3. Rerun: {len(prs2)} PRs, {len(reviews2)} reviews, {n2} requests")
         assert n2 == 0, f"Expected 0 requests on rerun, got {n2}"
         assert len(prs2) == len(prs) and len(reviews2) == len(reviews)

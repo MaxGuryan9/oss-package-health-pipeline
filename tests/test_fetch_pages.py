@@ -15,9 +15,9 @@ import main
 def test_fetch_pages() -> None:
     main.PER_PAGE = 10  # small pages force several Link rel="next" hops
     # Landing files go to a temp folder so test pages never mix with real data/raw/.
-    with tempfile.TemporaryDirectory() as tmp, main.make_client() as client:
-        records = main.fetch_pages(
-            client, "dask/dask", "commits", {"since": "2026-06-01T00:00:00Z"}, out_dir=Path(tmp)
+    with tempfile.TemporaryDirectory() as tmp:
+        records, _ = main.fetch_pages(
+            "dask/dask", "commits", {"since": "2026-06-01T00:00:00Z"}, out_dir=Path(tmp)
         )
 
     print(f"dask/dask commits since 2026-06-01: {len(records)} records")

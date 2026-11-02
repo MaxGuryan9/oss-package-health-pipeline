@@ -22,8 +22,7 @@ def test_extract_flow() -> None:
         main.LOADED_MARKER = main.RAW_DIR / "_LOADED"
         main.LOG_DIR = Path(tmp) / "logs"
 
-        main.extract(window_start=TEST_WINDOW)
-        first_run = main.REQUEST_COUNT
+        first_run = main.extract(window_start=TEST_WINDOW)
 
         for repo in main.REPOS:
             repo_dir = main.RAW_DIR / repo.replace("/", "__")
@@ -31,8 +30,7 @@ def test_extract_flow() -> None:
             assert found == ENDPOINTS, f"{repo}: folders {sorted(found)}, expected {sorted(ENDPOINTS)}"
         assert (main.LOG_DIR / "extract.log").exists(), "logs/extract.log was not written"
 
-        main.extract(window_start=TEST_WINDOW)
-        rerun = main.REQUEST_COUNT
+        rerun = main.extract(window_start=TEST_WINDOW)
 
         print(f"\nFirst run: {first_run} requests. Rerun: {rerun} requests.")
         print("Log file lines:", len((main.LOG_DIR / "extract.log").read_text().splitlines()))
