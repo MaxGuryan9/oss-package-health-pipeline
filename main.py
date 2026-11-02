@@ -7,9 +7,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Route our standard-library "extract" logger into Prefect's logs. Must be set before Prefect is imported.
-os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract")
+# Route our standard-library "extract" and "load" loggers into Prefect's logs. Must be set before Prefect is imported.
+os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load")
 
+import duckdb
 import httpx
 from prefect import flow, task
 from prefect.cache_policies import NO_CACHE
@@ -31,6 +32,26 @@ REQUEST_COUNT = 0  # API requests sent this run
 LAST_REMAINING = "?"  # X-RateLimit-Remaining from the latest response, for the progress log
 PULLS_PARAMS = {"state": "all", "sort": "updated", "direction": "desc"}
 
+# Task 2: one raw table per endpoint. "id" and "updated_at" are DuckDB expressions on each record (rec).
+LOAD_SPECS = {
+    "commits": {
+        "table": "raw_commits", "files": "*/commits/page_*.json", "id_type": "VARCHAR",
+        "id": "rec->>'sha'", "updated_at": "rec->'commit'->'committer'->>'date'",
+    },
+    "pulls": {
+        "table": "raw_pull_requests", "files": "*/pulls/page_*.json", "id_type": "BIGINT",
+        "id": "rec->>'number'", "updated_at": "rec->>'updated_at'",
+    },
+    "reviews": {
+        "table": "raw_pr_reviews", "files": "*/reviews/pr_*/page_*.json", "id_type": "BIGINT",
+        "id": "rec->>'id'", "updated_at": "rec->>'submitted_at'",
+    },
+    "releases": {
+        "table": "raw_releases", "files": "*/releases/page_*.json", "id_type": "BIGINT",
+        "id": "rec->>'id'", "updated_at": "rec->>'updated_at'",
+    },
+}
+
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
 LOG_DIR = PROJECT_DIR / "logs"
@@ -38,6 +59,7 @@ LOADED_MARKER = RAW_DIR / "_LOADED"
 DB_PATH = PROJECT_DIR / "packages.duckdb"
 
 logger = logging.getLogger("extract")
+load_logger = logging.getLogger("load")
 
 
 def setup_file_log(name: str) -> None:
@@ -282,6 +304,87 @@ def fetch_reviews_task(repo: str, prs: list[dict], created_since: str) -> list[d
     return reviews
 
 
+def records_sql(spec: dict) -> str:
+    """SELECT one row per record from every landing file of one endpoint, in raw-table column order."""
+    return f"""
+        SELECT repo, {spec['id']} AS id, {spec['updated_at']} AS updated_at, fetched_at,
+               filename AS source_file, rec AS payload
+        FROM (SELECT repo, fetched_at, filename, unnest(data) AS rec
+              FROM read_json('{RAW_DIR}/{spec['files']}',
+                             columns = {{repo: 'VARCHAR', fetched_at: 'TIMESTAMP', data: 'JSON[]'}},
+                             filename = true))
+    """
+
+
+def find_duplicates(con: duckdb.DuckDBPyConnection, spec: dict) -> list[tuple]:
+    """(repo, id, copies, files) for every (repo, id) that appears more than once in the landing files."""
+    return con.execute(f"""
+        SELECT repo, id, count(*) AS copies, list(source_file ORDER BY source_file) AS files
+        FROM ({records_sql(spec)})
+        GROUP BY repo, id
+        HAVING count(*) > 1
+        ORDER BY repo, id
+    """).fetchall()
+
+
+def load_table(con: duckdb.DuckDBPyConnection, endpoint: str) -> int:
+    """Upsert every landed record of one endpoint into its raw table. Returns the row count after."""
+    spec = LOAD_SPECS[endpoint]
+    table = spec["table"]
+    con.execute(f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            repo VARCHAR, id {spec['id_type']}, updated_at TIMESTAMP, fetched_at TIMESTAMP,
+            source_file VARCHAR, payload JSON, PRIMARY KEY (repo, id)
+        )
+    """)
+    before = con.execute(f"SELECT count(*) FROM {table}").fetchall()[0][0]
+    if not any(RAW_DIR.glob(spec["files"])):
+        load_logger.info(f"{table}: no landing files, {before} rows unchanged")
+        return before
+
+    duplicates = find_duplicates(con, spec)
+    if duplicates:
+        load_logger.warning(f"{table}: {len(duplicates)} keys appear more than once in data/raw (first 10 below)")
+        for repo, key, copies, files in duplicates[:10]:
+            load_logger.warning(f"  {repo} id={key} x{copies}: {', '.join(files)}")
+
+    con.execute(f"INSERT OR REPLACE INTO {table} {records_sql(spec)}")
+    after = con.execute(f"SELECT count(*) FROM {table}").fetchall()[0][0]
+    load_logger.info(f"{table}: {before} rows before, {after} after")
+    return after
+
+
+def write_load_state(con: duckdb.DuckDBPyConnection) -> None:
+    """One _load_state row per repo and endpoint: newest updated_at loaded, row count, load time."""
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS _load_state (
+            repo VARCHAR, endpoint VARCHAR, max_updated_at TIMESTAMP, row_count BIGINT,
+            loaded_at TIMESTAMP, PRIMARY KEY (repo, endpoint)
+        )
+    """)
+    loaded_at = datetime.now(timezone.utc).replace(tzinfo=None)  # UTC, like the GitHub timestamps
+    for endpoint, spec in LOAD_SPECS.items():
+        con.execute(f"""
+            INSERT OR REPLACE INTO _load_state
+            SELECT repo, '{endpoint}', max(updated_at), count(*), ? FROM {spec['table']} GROUP BY repo
+        """, [loaded_at])
+
+
+@task(name="load-table", task_run_name="load {endpoint}", cache_policy=NO_CACHE)
+def load_table_task(endpoint: str) -> int:
+    with duckdb.connect(DB_PATH) as con:
+        return load_table(con, endpoint)
+
+
+@task(name="finish-load", cache_policy=NO_CACHE)
+def finish_load_task() -> None:
+    """README Task 2: update _load_state only after every table loaded, then create the _LOADED marker."""
+    with duckdb.connect(DB_PATH) as con:
+        write_load_state(con)
+    LOADED_MARKER.touch()
+    load_logger.info(f"_load_state updated; created {LOADED_MARKER}")
+
+
 @flow(name="extract", task_runner=ThreadPoolTaskRunner(max_workers=3))
 def extract(window_start: str = WINDOW_START) -> None:
     """Task 1: pull commits, PRs, reviews, and releases for all repos to data/raw/."""
@@ -305,6 +408,16 @@ def extract(window_start: str = WINDOW_START) -> None:
         logger.warning("Ctrl-C received: stopping workers; pages on disk are kept for resume")
         raise
     logger.info(f"Extract finished: {REQUEST_COUNT} API requests this run")
+
+
+@flow(name="load")
+def load() -> None:
+    """Task 2: upsert data/raw/ into raw_* tables in packages.duckdb. Never calls the API."""
+    setup_file_log("load")
+    load_logger.info(f"Load starting: {RAW_DIR} -> {DB_PATH}")
+    for endpoint in LOAD_SPECS:  # one at a time: DuckDB allows a single writer
+        load_table_task(endpoint)
+    finish_load_task()
 
 
 @flow(name="rhk2dx-package-health-flow")
