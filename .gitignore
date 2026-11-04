@@ -2,6 +2,7 @@
 storage*
 github*
 CLAUDE.md
+DECISIONS.md
 
 # --- Secrets / environment variables ---
 .env
