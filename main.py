@@ -6,13 +6,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Route our standard-library "extract" and "load" loggers into Prefect's logs. Must be set before Prefect is imported.
-os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load")
+# Route our standard-library "extract", "load" and "transform" loggers into Prefect's logs. Must be set before Prefect is imported.
+os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load,transform")
 
 import duckdb
 import httpx
 from prefect import flow, task, unmapped
 from prefect.task_runners import ThreadPoolTaskRunner
+from prefect_dbt import PrefectDbtRunner, PrefectDbtSettings
 
 # --- Configuration ---
 REPOS = ["scikit-learn/scikit-learn", "dask/dask", "plotly/plotly.py"]
@@ -52,11 +53,12 @@ ARCHIVE_DIR = PROJECT_DIR / "data" / "archive"
 LOG_DIR = PROJECT_DIR / "logs"
 LOADED_MARKER = RAW_DIR / "_LOADED"
 DB_PATH = PROJECT_DIR / "packages.duckdb"
+DBT_DIR = PROJECT_DIR  # dbt_project.yml and profiles.yml sit next to main.py
 
 # Prefect already puts a handler on the root logger, so attach a file handler to each logger directly.
 # Add a name here for each new task (dbt, validate, model, plot).
 LOG_DIR.mkdir(exist_ok=True)
-for name in ["extract", "load"]:
+for name in ["extract", "load", "transform"]:
     log = logging.getLogger(name)
     log.setLevel(logging.INFO)
     handler = logging.FileHandler(LOG_DIR / f"{name}.log")
@@ -65,6 +67,7 @@ for name in ["extract", "load"]:
 
 logger = logging.getLogger("extract")
 load_logger = logging.getLogger("load")
+transform_logger = logging.getLogger("transform")
 
 
 # set your GH token before running
@@ -366,10 +369,28 @@ def load() -> None:
     finish_load_task()
 
 
+@task(name="dbt-build", log_prints=True)
+def dbt_build():
+    """Task 3: install dbt packages, then build and test every model. Fails if any model or test fails."""
+    runner = PrefectDbtRunner(
+        settings=PrefectDbtSettings(
+            project_dir=str(DBT_DIR),
+            profiles_dir=str(DBT_DIR),
+        )
+    )
+    transform_logger.info("Running dbt deps")
+    runner.invoke(["deps"])
+    transform_logger.info("Running dbt build")
+    result = runner.invoke(["build"])
+    transform_logger.info("dbt build finished: %d models and tests passed", len(result.result))
+    return result
+
+
 @flow(name="rhk2dx-package-health-flow")
 def package_health_flow() -> None:
     extract()
     load()
+    dbt_build()
 
 
 if __name__ == "__main__":
