@@ -7,10 +7,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Route our standard-library "extract", "load" and "transform" loggers into Prefect's logs. Must be set before Prefect is imported.
-os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load,transform,validate,model")
+os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load,transform,validate,model,plot")
 
 import duckdb
 import httpx
+import matplotlib
+# Technical setting only, NOT part of the analysis: "Agg" makes matplotlib write PNG files without opening a window.
+# Without it, macOS raises "Cannot create a GUI FigureManager outside the main thread" when a plot is drawn off the
+# main thread (Prefect can run tasks in worker threads). It changes nothing about how the plots look.
+matplotlib.use("Agg")
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 from prefect import flow, task, unmapped
 from prefect.task_runners import ThreadPoolTaskRunner
 from prefect_dbt import PrefectDbtRunner, PrefectDbtSettings
@@ -80,10 +87,56 @@ SCORE_SPECS = {
     "merge_rate":             {"dimension": "throughput",      "weight": 10, "zero_at": 0,     "one_at": 1},
 }
 
+# Task 6: one fixed color per repo across every plot (README Presentation criterion)
+REPO_COLORS = {
+    "scikit-learn/scikit-learn": "#2a78d6",
+    "dask/dask": "#eb6834",
+    "plotly/plotly.py": "#2f9e6e",
+}
+TREND_PANELS = [
+    # rows ordered by Task 5 weight tier (SCORE_SPECS); backlog and release cadence have no monthly column in mart_repo_monthly
+    # (column, title, y-axis unit, how to summarize the window in the panel subtitle, tier and dimension)
+    ("median_first_review_hours", "Median first-review time", "hours (log scale)", "median", "Tier 1 · Responsiveness"),
+    ("active_contributors", "Active PR authors", "authors / month", "median", "Tier 2 · Contributors"),
+    ("top_author_share", "Top author's share", "share of merged PRs (0-1)", "median", "Tier 2 · Contributors"),
+    ("commits", "Commits", "commits / month", "total", "Tier 3 · Activity"),
+    ("prs_opened", "PRs opened", "PRs / month", "total", "Tier 3 · Throughput"),
+    ("prs_merged", "PRs merged", "PRs / month", "total", "Tier 3 · Throughput"),
+]
+# Look of images/commit_activity.png: matplotlib's default font, no box, light grid, gray tick labels, no legend frame
+EXAMPLE_STYLE = {
+    "font.family": "DejaVu Sans",
+    "axes.spines.top": False, "axes.spines.right": False, "axes.spines.left": False, "axes.spines.bottom": False,
+    "axes.grid": True, "axes.grid.axis": "y", "grid.color": "#e5e5e5",
+    "axes.facecolor": "white", "figure.facecolor": "white",
+    "xtick.color": "#777777", "ytick.color": "#777777", "axes.labelcolor": "#777777",
+    "xtick.major.size": 0, "ytick.major.size": 0,
+    "legend.frameon": False,
+}
+# Task 6 plot 3: months grouped by PR load relative to the repo's own average (cutoffs 0.8x and 1.2x)
+LOAD_BINS_SQL = """
+    WITH months AS (
+        SELECT repo, merge_ratio, active_contributors,
+               prs_opened / avg(prs_opened) OVER (PARTITION BY repo) AS load_vs_average
+        FROM mart_repo_monthly
+        WHERE NOT is_partial_month AND merge_ratio IS NOT NULL
+    )
+    SELECT repo,
+           CASE WHEN load_vs_average < 0.8 THEN 0 WHEN load_vs_average <= 1.2 THEN 1 ELSE 2 END AS load_bin,
+           count(*) AS n_months,
+           avg(merge_ratio) AS avg_merge_ratio,
+           avg(active_contributors) AS avg_authors
+    FROM months
+    GROUP BY ALL
+    ORDER BY repo, load_bin
+"""
+LOAD_BIN_LABELS = ["Quiet months\n(< 0.8x the repo's average)", "Normal months\n(0.8x - 1.2x)", "Busy months\n(> 1.2x)"]
+
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
 ARCHIVE_DIR = PROJECT_DIR / "data" / "archive"
 LOG_DIR = PROJECT_DIR / "logs"
+PLOT_DIR = PROJECT_DIR / "plots"
 LOADED_MARKER = RAW_DIR / "_LOADED"
 DB_PATH = PROJECT_DIR / "packages.duckdb"
 DBT_DIR = PROJECT_DIR  # dbt_project.yml and profiles.yml sit next to main.py
@@ -91,7 +144,7 @@ DBT_DIR = PROJECT_DIR  # dbt_project.yml and profiles.yml sit next to main.py
 # Prefect already puts a handler on the root logger, so attach a file handler to each logger directly.
 # Add a name here for each new task (dbt, validate, model, plot).
 LOG_DIR.mkdir(exist_ok=True)
-for name in ["extract", "load", "transform", "validate", "model"]:
+for name in ["extract", "load", "transform", "validate", "model", "plot"]:
     log = logging.getLogger(name)
     log.setLevel(logging.INFO)
     handler = logging.FileHandler(LOG_DIR / f"{name}.log")
@@ -103,6 +156,7 @@ load_logger = logging.getLogger("load")
 transform_logger = logging.getLogger("transform")
 validate_logger = logging.getLogger("validate")
 model_logger = logging.getLogger("model")
+plot_logger = logging.getLogger("plot")
 
 
 # set your GH token before running
@@ -651,6 +705,140 @@ def score_health() -> None:
         model_logger.info(f"  {rank:<5}{repo:<27}{score:>6.3f}")
 
 
+def add_titles(fig, title: str, subtitle: str) -> None:
+    """Bold left-aligned title with a gray subtitle under it (images/commit_activity.png), then fit the panels below."""
+    height = fig.get_figheight()  # inches, so the title area is the same size on every figure
+    fig.text(0.01, 1 - 0.25 / height, title, ha="left", va="top", fontweight="bold", fontsize=18, color="#222222")
+    fig.text(0.01, 1 - 0.7 / height, subtitle, ha="left", va="top", fontsize=11, color="#777777")
+    fig.tight_layout(rect=(0, 0, 1, 1 - 1.15 / height))
+
+
+def plot_dimension_profile(con: duckdb.DuckDBPyConnection) -> Path:
+    """Plot 1: every scored dimension for all three repos, bars in rank order."""
+    dimensions = [spec["dimension"] for spec in SCORE_SPECS.values()]
+    labels = [f"{spec['dimension'].replace('_', ' ').capitalize()} ({spec['weight']}%)" for spec in SCORE_SPECS.values()]
+    rows = con.execute(f"SELECT rank, repo, score, {', '.join(dimensions)} FROM health_scores ORDER BY rank").fetchall()
+
+    # bars run left to right, so the grid lines are vertical here
+    with plt.rc_context(EXAMPLE_STYLE | {"axes.grid.axis": "x"}):
+        fig, ax = plt.subplots(figsize=(12, 8))
+        bar_height = 0.8 / len(rows)
+        for i, row in enumerate(rows):
+            rank, repo, score = row[:3]
+            # one bar per dimension, shifted down by i so the 3 repos sit side by side in rank order
+            positions = [d + i * bar_height for d in range(len(dimensions))]
+            bars = ax.barh(positions, row[3:], height=bar_height, color=REPO_COLORS[repo],
+                           label=f"#{rank} {repo} · score {score:.3f}")
+            ax.bar_label(bars, fmt="%.2f", padding=3, fontsize=9, color="#777777")
+        ax.set_yticks([d + bar_height for d in range(len(dimensions))], labels, color="#222222", fontsize=11)
+        ax.invert_yaxis()  # highest-weight dimension at the top, #1 repo first in each group
+        ax.set_xlim(0, 1)
+        ax.set_axisbelow(True)  # grid lines behind the bars, not across them
+        ax.set_xlabel("Subscore (0 = least healthy, 1 = healthiest)")
+        ax.set_ylabel("Dimension (weight in total score)")
+        fig.legend(loc="upper right", bbox_to_anchor=(0.99, 0.99), fontsize=11)  # top right, in rank order
+        add_titles(fig, "Health subscores by dimension",
+                   "bars in rank order within each dimension · weight in parentheses")
+        path = PLOT_DIR / "dimension_profile.png"
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+    return path
+
+
+def plot_monthly_trends(con: duckdb.DuckDBPyConnection, repos: list[str]) -> Path:
+    """Plot 2: one row per monthly metric, one column per repo, the column's repo highlighted."""
+    # 3-month rolling mean per repo and metric (current and 2 previous months), like images/commit_activity.png
+    rolling = ", ".join(
+        f"avg({column}) OVER (PARTITION BY repo ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS {column}_rolling"
+        for column, _, _, _, _ in TREND_PANELS
+    )
+    df = con.execute(f"SELECT *, {rolling} FROM mart_repo_monthly WHERE NOT is_partial_month ORDER BY repo, month").df()
+
+    with plt.rc_context(EXAMPLE_STYLE):
+        fig, axes = plt.subplots(len(TREND_PANELS), len(repos), figsize=(16, 26), sharex=True, sharey="row")
+        for r, (column, title, unit, summary, tier) in enumerate(TREND_PANELS):
+            for c, repo in enumerate(repos):
+                ax = axes[r, c]
+                for other in repos:  # the other two repos in faded gray, for comparison
+                    if other != repo:
+                        other_df = df[df["repo"] == other]
+                        ax.plot(other_df["month"], other_df[f"{column}_rolling"], color="#cccccc", linewidth=1)
+                repo_df = df[df["repo"] == repo]
+                ax.scatter(repo_df["month"], repo_df[column], color=REPO_COLORS[repo], alpha=0.35, s=12)
+                ax.plot(repo_df["month"], repo_df[f"{column}_rolling"], color=REPO_COLORS[repo], linewidth=2.5)
+                if summary == "total":
+                    note = f"{tier} · {title} · {repo_df[column].sum():,.0f} total"
+                else:
+                    note = f"{tier} · {title} · median {repo_df[column].median():,.2f}"
+                ax.set_title(f"#{c + 1} {repo}\n", loc="left", fontweight="bold", fontsize=12)
+                ax.text(0, 1.02, note, transform=ax.transAxes, color="#777777", fontsize=10)
+                if column == "median_first_review_hours":
+                    ax.set_yscale("log")  # median review time is heavily right-skewed
+                ax.set_ylabel(unit)
+                ax.set_xlabel("Month")
+                ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 7]))  # Jan and Jul ticks, like the example
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
+                # sharex / sharey hide inner tick labels; show them on every panel so each reads on its own
+                ax.tick_params(labelbottom=True, labelleft=True)
+        add_titles(fig, f"Monthly metrics per repo ({df['month'].min():%b %Y} - {df['month'].max():%b %Y})",
+                   "line = 3-month rolling mean · dots = raw monthly values · gray = the other two repos · "
+                   "columns in rank order · rows in Task 5 weight-tier order\n"
+                   "authors exclude bots · current partial month excluded")
+        path = PLOT_DIR / "monthly_trends.png"
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+    return path
+
+
+def plot_load_vs_rejection(con: duckdb.DuckDBPyConnection, repos: list[str]) -> Path:
+    """Plot 3: average merge ratio in quiet, normal and busy months; bubble size = average active PR authors."""
+    df = con.execute(LOAD_BINS_SQL).df()
+
+    with plt.rc_context(EXAMPLE_STYLE):
+        fig, ax = plt.subplots(figsize=(12, 8))
+        for i, repo in enumerate(repos):
+            repo_df = df[df["repo"] == repo]
+            x = repo_df["load_bin"] + (i - 1) * 0.08  # small sideways shift so bubbles in the same bin do not overlap
+            ax.plot(x, repo_df["avg_merge_ratio"], color=REPO_COLORS[repo], linewidth=2, zorder=1)
+            ax.scatter(x, repo_df["avg_merge_ratio"], s=repo_df["avg_authors"] * 12, color=REPO_COLORS[repo],
+                       alpha=0.8, edgecolor="white", zorder=2)
+            for xi, y, authors, n in zip(x, repo_df["avg_merge_ratio"], repo_df["avg_authors"], repo_df["n_months"]):
+                # first repo's labels go left of its bubbles, the others right, so labels in the same bin never overlap
+                ax.annotate(f"{y:.2f}\n{authors:.0f} authors, {n} mo", (xi, y), textcoords="offset points",
+                            xytext=(-14, -4) if i == 0 else (14, -4), ha="right" if i == 0 else "left",
+                            fontsize=9, color=REPO_COLORS[repo],
+                            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85, "pad": 1})  # readable over lines
+        ax.set_xticks([0, 1, 2], LOAD_BIN_LABELS, color="#222222", fontsize=11)
+        ax.set_xlim(-0.55, 2.6)
+        # merge ratios here run 0.62-0.84; 0.5-0.9 leaves room for labels without exaggerating the drops
+        ax.set_ylim(0.5, 0.9)
+        ax.set_xlabel("PRs opened that month, relative to the repo's own monthly average")
+        ax.set_ylabel("Average merge ratio (merged / (merged + closed unmerged))")
+        # same-size legend markers (the bubbles' own sizes would make the legend uneven), top right in rank order
+        handles = [plt.Line2D([], [], marker="o", linestyle="-", color=REPO_COLORS[repo], markersize=8) for repo in repos]
+        fig.legend(handles, [f"#{i + 1} {repo}" for i, repo in enumerate(repos)],
+                   loc="upper right", bbox_to_anchor=(0.99, 0.99), fontsize=11)
+        add_titles(fig, "Load vs rejection",
+                   "do busier months merge a smaller share of PRs? · bubble size = average active PR authors (non-bot) "
+                   "in those months\nlabels = average merge ratio, authors, number of months · current partial month excluded")
+        path = PLOT_DIR / "load_vs_rejection.png"
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+    return path
+
+
+@task(name="plot-health")
+def plot_health() -> None:
+    """Task 6: save the three plots as PNG to plots/."""
+    PLOT_DIR.mkdir(exist_ok=True)
+    # no read_only=True: dbt keeps a read-write connection open in this process (see validate)
+    with duckdb.connect(DB_PATH) as con:
+        repos = [row[0] for row in con.execute("SELECT repo FROM health_scores ORDER BY rank").fetchall()]  # rank order
+        paths = [plot_dimension_profile(con), plot_monthly_trends(con, repos), plot_load_vs_rejection(con, repos)]
+    for path in paths:
+        plot_logger.info(f"Saved {path}")
+
+
 @flow(name="rhk2dx-package-health-flow")
 def package_health_flow() -> None:
     extract()
@@ -658,6 +846,7 @@ def package_health_flow() -> None:
     dbt_build()
     validate()
     score_health()
+    plot_health()
 
 
 if __name__ == "__main__":
