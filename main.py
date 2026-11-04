@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Route our standard-library "extract", "load" and "transform" loggers into Prefect's logs. Must be set before Prefect is imported.
-os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load,transform")
+os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load,transform,validate")
 
 import duckdb
 import httpx
@@ -47,6 +47,20 @@ LOAD_SPECS = {
     },
 }
 
+# Task 4: thresholds for outlier detection (README Task 4). Different author types get different cutoffs,
+# because a wait that is normal for a human PR means an automated PR got stuck.
+HUMAN_MERGE_QUANTILE = 0.99  # human PRs: slower than 99% of that repo's merged human PRs; 0.99 (not 0.90) so every flag is far outside the trend
+BOT_MERGE_HOURS = 7 * 24     # bot PRs: automated updates normally merge within hours, so a week means stuck
+COMMIT_BURST_IQR = 3         # weekly commits above Q3 + 3 x IQR are "far outside" (Tukey's far-out rule)
+
+# Task 4: staging rows dropped on purpose (raw count minus these must equal the staging count)
+STAGING_SPECS = {
+    "commits": {"model": "stg_commits", "dropped": "false"},
+    "pulls": {"model": "stg_pull_requests", "dropped": "false"},
+    "reviews": {"model": "stg_pr_reviews", "dropped": "payload->>'state' = 'PENDING'"},
+    "releases": {"model": "stg_releases", "dropped": "(payload->>'draft')::boolean"},
+}
+
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
 ARCHIVE_DIR = PROJECT_DIR / "data" / "archive"
@@ -58,7 +72,7 @@ DBT_DIR = PROJECT_DIR  # dbt_project.yml and profiles.yml sit next to main.py
 # Prefect already puts a handler on the root logger, so attach a file handler to each logger directly.
 # Add a name here for each new task (dbt, validate, model, plot).
 LOG_DIR.mkdir(exist_ok=True)
-for name in ["extract", "load", "transform"]:
+for name in ["extract", "load", "transform", "validate"]:
     log = logging.getLogger(name)
     log.setLevel(logging.INFO)
     handler = logging.FileHandler(LOG_DIR / f"{name}.log")
@@ -68,6 +82,7 @@ for name in ["extract", "load", "transform"]:
 logger = logging.getLogger("extract")
 load_logger = logging.getLogger("load")
 transform_logger = logging.getLogger("transform")
+validate_logger = logging.getLogger("validate")
 
 
 # set your GH token before running
@@ -386,11 +401,193 @@ def dbt_build():
     return result
 
 
+def landed_globs(spec: dict) -> list[str]:
+    """File patterns for one endpoint in data/raw/ and every archived raw_* folder, skipping ones with no files."""
+    folders = [RAW_DIR] + sorted(ARCHIVE_DIR.glob("raw_*"))
+    return [str(folder / spec["files"]) for folder in folders if any(folder.glob(spec["files"]))]
+
+
+def check_landed_vs_raw(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """A1: every distinct (repo, id) in the landed files is in the raw table. Returns failure messages."""
+    failures = []
+    for endpoint, spec in LOAD_SPECS.items():
+        rows = con.execute(f"""
+            WITH landed AS (
+                SELECT DISTINCT repo, ({spec['id']})::{spec['id_type']} AS id
+                FROM (SELECT repo, unnest(data) AS rec
+                      FROM read_json({landed_globs(spec)},
+                                     columns = {{repo: 'VARCHAR', fetched_at: 'TIMESTAMP', data: 'JSON[]'}}))
+            )
+            SELECT landed.repo, count(*) AS landed, sum(CASE WHEN t.id IS NULL THEN 1 ELSE 0 END) AS missing
+            FROM landed
+            LEFT JOIN {spec['table']} t ON t.repo = landed.repo AND t.id = landed.id
+            GROUP BY ALL ORDER BY landed.repo
+        """).fetchall()
+        for repo, landed, missing in rows:
+            validate_logger.info(f"[{repo}] {endpoint}: {landed} distinct landed records, {missing} missing from {spec['table']}")
+            if missing:
+                failures.append(f"{repo} {endpoint}: {missing} landed records missing from {spec['table']}")
+    return failures
+
+
+def check_raw_vs_staging(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """A2: raw row count minus intentionally dropped rows equals the staging row count, per repo and endpoint."""
+    failures = []
+    for endpoint, spec in LOAD_SPECS.items():
+        stg = STAGING_SPECS[endpoint]
+        rows = con.execute(f"""
+            WITH raw AS (
+                SELECT repo, count(*) AS raw_rows, sum(CASE WHEN {stg['dropped']} THEN 1 ELSE 0 END) AS dropped
+                FROM {spec['table']} GROUP BY ALL
+            ),
+            staged AS (
+                SELECT repo, count(*) AS stg_rows FROM {stg['model']} GROUP BY ALL
+            )
+            SELECT raw.repo, raw.raw_rows, raw.dropped, coalesce(staged.stg_rows, 0)
+            FROM raw LEFT JOIN staged USING (repo) ORDER BY raw.repo
+        """).fetchall()
+        for repo, raw_rows, dropped, stg_rows in rows:
+            validate_logger.info(f"[{repo}] {endpoint}: {raw_rows} raw - {dropped} dropped = {raw_rows - dropped}, {stg['model']} has {stg_rows}")
+            if raw_rows - dropped != stg_rows:
+                failures.append(f"{repo} {endpoint}: {raw_rows - dropped} expected in {stg['model']}, found {stg_rows}")
+    return failures
+
+
+def check_monthly_commits(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """A3: every repo has commits in every complete month.
+
+    Caveat to the README rule: a month with 0 commits passes (with a warning) only if the secondary sanity
+    check also finds 0 merged PRs that month. Every merge adds a commit to the default branch, so
+    "no merges and no commits" means the repo was inactive, while "merges but no commits" means lost data.
+    """
+    failures = []
+    rows = con.execute("""
+        SELECT repo, strftime(month, '%Y-%m'), prs_merged, prs_opened
+        FROM mart_repo_monthly
+        WHERE NOT is_partial_month AND commits = 0
+        ORDER BY repo, month
+    """).fetchall()
+    for repo, month, merged, opened in rows:
+        if merged == 0:
+            validate_logger.warning(
+                f"[{repo}] {month}: 0 commits. Passed by the secondary sanity check (0 merged PRs, "
+                f"{opened} opened): the repo was inactive that month, not missing data."
+            )
+        else:
+            failures.append(f"{repo} {month}: 0 commits but {merged} merged PRs, so commits are missing")
+    validate_logger.info(f"Monthly commit check: {len(rows)} zero-commit complete months, {len(failures)} failures")
+    return failures
+
+
+def log_outliers(con: duckdb.DuckDBPyConnection) -> None:
+    """B: flag slow merges and commit bursts, list them, and keep them all (see README write-up)."""
+    # Separate cutoffs per author category: a week is normal for a human PR but means an automated PR got stuck.
+    slow = con.execute(f"""
+        WITH cutoffs AS (
+            SELECT repo, quantile_cont(hours_to_merge, {HUMAN_MERGE_QUANTILE}) AS human_cutoff
+            FROM fct_pull_requests WHERE is_merged AND NOT author_is_bot GROUP BY ALL
+        )
+        SELECT f.repo, f.number, f.author_login, f.author_is_bot,
+               round(f.hours_to_merge / 24, 1) AS days,
+               round(CASE WHEN f.author_is_bot THEN {BOT_MERGE_HOURS} ELSE c.human_cutoff END / 24, 1) AS cutoff_days
+        FROM fct_pull_requests f
+        JOIN cutoffs c USING (repo)
+        WHERE f.is_merged
+            AND f.hours_to_merge > CASE WHEN f.author_is_bot THEN {BOT_MERGE_HOURS} ELSE c.human_cutoff END
+        ORDER BY f.repo, f.author_is_bot DESC, f.hours_to_merge DESC
+    """).fetchall()
+    validate_logger.info(
+        f"Merge-time outliers: human PRs above their repo's {HUMAN_MERGE_QUANTILE:.0%} quantile, "
+        f"bot PRs above {BOT_MERGE_HOURS / 24:.0f} days. {len(slow)} flagged, all kept (real merges; medians are robust)."
+    )
+    for repo, number, author, is_bot, days, cutoff_days in slow:
+        kind = "bot" if is_bot else "human"
+        validate_logger.info(f"  [{repo}] PR #{number} by {author} ({kind}): {days} days to merge (cutoff {cutoff_days})")
+
+    bursts = con.execute(f"""
+        WITH weeks AS (
+            SELECT repo, date_trunc('week', committed_at)::date AS week, count(*) AS commits,
+                   sum(is_bot::int) AS bot_commits
+            FROM stg_commits WHERE committed_at >= '{WINDOW_START[:10]}' GROUP BY ALL
+        ),
+        cutoffs AS (
+            SELECT repo, quantile_cont(commits, 0.75)
+                       + {COMMIT_BURST_IQR} * (quantile_cont(commits, 0.75) - quantile_cont(commits, 0.25)) AS cutoff
+            FROM weeks GROUP BY ALL
+        )
+        SELECT weeks.repo, weeks.week, weeks.commits, weeks.bot_commits, round(cutoffs.cutoff)
+        FROM weeks JOIN cutoffs USING (repo)
+        WHERE weeks.commits > cutoffs.cutoff
+        ORDER BY weeks.repo, weeks.week
+    """).fetchall()
+    validate_logger.info(
+        f"Weekly commit outliers: weeks above Q3 + {COMMIT_BURST_IQR} x IQR per repo. "
+        f"{len(bursts)} flagged, all kept (bot commits counted to spot automated bursts)."
+    )
+    for repo, week, commits, bot_commits, cutoff in bursts:
+        validate_logger.info(f"  [{repo}] week of {week}: {commits} commits, {bot_commits} by bots (cutoff {cutoff:.0f})")
+
+
+def log_descriptive_stats(con: duckdb.DuckDBPyConnection) -> None:
+    """C: per-repo medians and 90th percentiles from the marts, commits per week, releases per year."""
+    rows = con.execute(f"""
+        WITH prs AS (
+            SELECT repo,
+                   median(hours_to_first_review) AS review_p50,
+                   quantile_cont(hours_to_first_review, 0.9) AS review_p90,
+                   median(hours_to_merge) AS merge_p50,
+                   quantile_cont(hours_to_merge, 0.9) AS merge_p90
+            FROM fct_pull_requests GROUP BY ALL
+        ),
+        commits AS (
+            -- complete months only: the days from the window start to the first day of the partial month
+            SELECT repo,
+                   sum(CASE WHEN NOT is_partial_month THEN commits ELSE 0 END)
+                       / (date_diff('day', DATE '{WINDOW_START[:10]}', max(month)) / 7.0) AS commits_per_week
+            FROM mart_repo_monthly GROUP BY ALL
+        ),
+        releases AS (
+            -- full releases only (prereleases excluded), over the days from the window start to run time
+            SELECT repo,
+                   sum(CASE WHEN NOT is_prerelease THEN 1 ELSE 0 END)
+                       / (date_diff('day', DATE '{WINDOW_START[:10]}',
+                                    (SELECT max(fetched_at) FROM raw_pull_requests)) / 365.25) AS releases_per_year
+            FROM fct_releases GROUP BY ALL
+        )
+        SELECT repo, review_p50, review_p90, merge_p50, merge_p90, commits_per_week, releases_per_year
+        FROM prs JOIN commits USING (repo) JOIN releases USING (repo)
+        ORDER BY repo
+    """).fetchall()
+    validate_logger.info("Descriptive statistics (hours; medians and 90th percentiles skip unreviewed / unmerged PRs):")
+    validate_logger.info(f"  {'repo':<27}{'review p50':>11}{'review p90':>11}{'merge p50':>10}{'merge p90':>10}{'commits/wk':>11}{'releases/yr':>12}")
+    for repo, r50, r90, m50, m90, cpw, rpy in rows:
+        validate_logger.info(f"  {repo:<27}{r50:>11.1f}{r90:>11.1f}{m50:>10.1f}{m90:>10.1f}{cpw:>11.1f}{rpy:>12.1f}")
+
+
+@task(name="validate")
+def validate() -> None:
+    """Task 4: end-to-end checks from landed files to raw tables to staging, then outliers and statistics.
+
+    Runs every check before failing, so one run lists every problem. Raises if any completeness check fails.
+    """
+    # no read_only=True: dbt runs in this same process and keeps a read-write connection open,
+    # and DuckDB refuses a second connection to the same file with different settings
+    with duckdb.connect(DB_PATH) as con:
+        con.execute("SET TimeZone = 'UTC'")
+        failures = check_landed_vs_raw(con) + check_raw_vs_staging(con) + check_monthly_commits(con)
+        log_outliers(con)
+        log_descriptive_stats(con)
+    if failures:
+        raise ValueError("Validation failed:\n" + "\n".join(failures))
+    validate_logger.info("All completeness checks passed")
+
+
 @flow(name="rhk2dx-package-health-flow")
 def package_health_flow() -> None:
     extract()
     load()
     dbt_build()
+    validate()
 
 
 if __name__ == "__main__":
