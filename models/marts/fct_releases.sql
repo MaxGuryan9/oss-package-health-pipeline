@@ -17,7 +17,15 @@ with_gaps as (
             'day',
             lag(published_at) over (partition by repo order by published_at),
             published_at
-        ) as days_since_previous
+        ) as days_since_previous,
+        -- gap to the previous FULL release; NULL for prereleases
+        case when not prerelease then
+            date_diff(
+                'day',
+                lag(published_at) over (partition by repo, prerelease order by published_at),
+                published_at
+            )
+        end as days_since_previous_full
     from releases
 )
 
