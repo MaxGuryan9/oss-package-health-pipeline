@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: stg_commits
+    description: >
+      One row per commit (latest fetch per repo + sha).
+      Bot rule: is_bot = author.type = 'Bot' OR author.login LIKE '%[bot]'; false when author is null.
+    columns:
+      - name: sha
+        data_tests:
+          - unique
+          - not_null
+      - name: committed_at
+        data_tests:
+          - not_null
+
+  - name: stg_pull_requests
+    description: >
+      One row per pull request (latest fetch per repo + number).
+      Bot rule applied to the PR author.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [repo, number]
+    columns:
+      - name: number
+        data_tests:
+          - not_null
+      - name: state
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['open', 'closed']
+
+  - name: stg_pr_reviews
+    description: >
+      One row per submitted review; PENDING reviews dropped.
+      Bot rule applied to the reviewer.
+    columns:
+      - name: id
+        data_tests:
+          - unique
+          - not_null
+      - name: pr_number
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_pull_requests')
+                field: number
+      - name: state
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED']
+
+  - name: stg_releases
+    description: One row per published release; drafts dropped.
+    columns:
+      - name: id
+        data_tests:
+          - unique
+          - not_null

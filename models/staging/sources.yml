@@ -1,0 +1,15 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: main
+    description: Raw GitHub records loaded by the load flow (Task 2). One row per (repo, id); fields stay inside payload.
+    tables:
+      - name: raw_commits
+        description: Commits since the window start, one row per (repo, sha).
+      - name: raw_pull_requests
+        description: Pull requests updated since the window start, one row per (repo, number).
+      - name: raw_pr_reviews
+        description: Reviews on PRs created since the window start, one row per (repo, review id).
+      - name: raw_releases
+        description: All releases, one row per (repo, release id).
