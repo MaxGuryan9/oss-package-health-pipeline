@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Route our standard-library "extract", "load" and "transform" loggers into Prefect's logs. Must be set before Prefect is imported.
-os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load,transform,validate")
+os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load,transform,validate,model")
 
 import duckdb
 import httpx
@@ -61,6 +61,25 @@ STAGING_SPECS = {
     "releases": {"model": "stg_releases", "dropped": "(payload->>'draft')::boolean"},
 }
 
+# Task 5: fixed-range min-max scoring. score = (value - zero_at) / (one_at - zero_at), clipped to 0-1.
+# zero_at scores 0 (least healthy), one_at scores 1 (healthiest). Lower-is-better metrics have zero_at > one_at,
+# so the same formula flips them. Fixed bounds (not the 3 repos' min and max) keep close repos close
+# and do not change if the repo set changes.
+# Weights sum to 100, in three tiers ranked by how directly each metric measures health and how strong
+# its caveats are; equal within a tier.
+SCORE_SPECS = {
+    # Tier 1 (25 each): clear signals of maintainers keeping up with incoming work
+    "pct_reviewed_within_7d": {"dimension": "responsiveness",  "weight": 25, "zero_at": 0,     "one_at": 1},
+    "pct_open_stale":         {"dimension": "backlog",         "weight": 25, "zero_at": 1,     "one_at": 0},
+    # Tier 2 (15 each): important idea, weaker metric (measures change, not level; regular releases are not always better)
+    "top_author_share_trend": {"dimension": "contributors",    "weight": 15, "zero_at": 0.02,  "one_at": -0.02},  # +/- 2 pts per month
+    "release_gap_cv":         {"dimension": "release_cadence", "weight": 15, "zero_at": 2,     "one_at": 0},      # CV 2 = gaps vary by twice their average
+    # Tier 3 (10 each): can move for reasons other than health (commit habits; strict review lowers merge rate,
+    # and a very high merge rate can mean weak review)
+    "commit_trend":           {"dimension": "activity",        "weight": 10, "zero_at": -0.10, "one_at": 0.10},   # +/- 10% per month
+    "merge_rate":             {"dimension": "throughput",      "weight": 10, "zero_at": 0,     "one_at": 1},
+}
+
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
 ARCHIVE_DIR = PROJECT_DIR / "data" / "archive"
@@ -72,7 +91,7 @@ DBT_DIR = PROJECT_DIR  # dbt_project.yml and profiles.yml sit next to main.py
 # Prefect already puts a handler on the root logger, so attach a file handler to each logger directly.
 # Add a name here for each new task (dbt, validate, model, plot).
 LOG_DIR.mkdir(exist_ok=True)
-for name in ["extract", "load", "transform", "validate"]:
+for name in ["extract", "load", "transform", "validate", "model"]:
     log = logging.getLogger(name)
     log.setLevel(logging.INFO)
     handler = logging.FileHandler(LOG_DIR / f"{name}.log")
@@ -83,6 +102,7 @@ logger = logging.getLogger("extract")
 load_logger = logging.getLogger("load")
 transform_logger = logging.getLogger("transform")
 validate_logger = logging.getLogger("validate")
+model_logger = logging.getLogger("model")
 
 
 # set your GH token before running
@@ -582,12 +602,62 @@ def validate() -> None:
     validate_logger.info("All completeness checks passed")
 
 
+@task(name="score-health")
+def score_health() -> None:
+    """Task 5: score each repo per dimension (0-1), combine with SCORE_SPECS weights, rank, save to health_scores."""
+    dimensions = []
+    subscores = []
+    weighted = []
+    for metric, spec in SCORE_SPECS.items():
+        dimension = spec["dimension"]
+        dimensions.append(dimension)
+        subscores.append(
+            f"greatest(0, least(1, ({metric} - {spec['zero_at']}) / ({spec['one_at']} - {spec['zero_at']}))) AS {dimension}"
+        )
+        weighted.append(f"{spec['weight']} * {dimension}")
+
+    # no read_only=True: dbt keeps a read-write connection open in this process (see validate)
+    with duckdb.connect(DB_PATH) as con:
+        con.execute(f"""
+            CREATE OR REPLACE TABLE health_scores AS
+            WITH subscores AS (
+                SELECT repo, {", ".join(subscores)}
+                FROM mart_health_inputs
+            )
+            SELECT rank() OVER (ORDER BY {" + ".join(weighted)} DESC) AS rank,
+                   repo,
+                   ({" + ".join(weighted)}) / 100 AS score,
+                   {", ".join(dimensions)}
+            FROM subscores
+            ORDER BY rank
+        """)
+        rows = con.execute("SELECT * FROM health_scores ORDER BY rank").fetchall()
+        # robustness check: same subscores, equal weights; logged only
+        equal = con.execute(f"""
+            SELECT rank() OVER (ORDER BY ({" + ".join(dimensions)}) DESC) AS rank,
+                   repo, ({" + ".join(dimensions)}) / {len(dimensions)} AS score
+            FROM health_scores
+            ORDER BY rank
+        """).fetchall()
+
+    model_logger.info("Health ranking (score and subscores 0-1, 1 = healthiest; weights: "
+                      + ", ".join(f"{s['dimension']} {s['weight']}" for s in SCORE_SPECS.values()) + "):")
+    model_logger.info(f"  {'rank':<5}{'repo':<27}{'score':>6}" + "".join(f"{d:>16}" for d in dimensions))
+    for row in rows:
+        rank, repo, score = row[:3]
+        model_logger.info(f"  {rank:<5}{repo:<27}{score:>6.3f}" + "".join(f"{s:>16.3f}" for s in row[3:]))
+    model_logger.info("Robustness check, equal weights (1/6 each, not stored):")
+    for rank, repo, score in equal:
+        model_logger.info(f"  {rank:<5}{repo:<27}{score:>6.3f}")
+
+
 @flow(name="rhk2dx-package-health-flow")
 def package_health_flow() -> None:
     extract()
     load()
     dbt_build()
     validate()
+    score_health()
 
 
 if __name__ == "__main__":
