@@ -618,7 +618,19 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 
 ## 12. Extended items
 
-_To be written after the scheduled deployment and API odometer are built._
+| Item                 | Status        | Where                                                                                                                                                                                                                                                                                      |
+|----------------------|---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Concurrent fetching  | Done          | `extract`: one `fetch_repo` task per repo on a 3-worker `ThreadPoolTaskRunner`, with a shared `RATE_LOCK` (section 5)                                                                                                                                                                      |
+| Scheduled deployment | Done          | Monthly on the 28th at midnight Eastern on `uvasds-k8s-pool`; `python main.py --deploy`. Command, settings, and the manually triggered run's log are in [DEPLOYMENTS.md](DEPLOYMENTS.md)                                                                                                   |
+| API odometer         | Done          | Every request passes through `github_get`, which adds 1 to a thread-safe counter (`API_REQUESTS`, `ODOMETER_LOCK`). The flow resets it at the start and logs it at the end, even if a task fails. Unlike `extract`'s own count, it also counts requests from attempts that Prefect retried |
+| GraphQL ingestion    | Not attempted |                                                                                                                                                                                                                                                                                            |
+
+Odometer from a local incremental run (2026-11-04 21:21 EST), matching extract's own count:
+
+    Extract finished: 23 API requests this run
+    API odometer: 23 GitHub API requests this flow run
+
+Server deployment runs are full runs, about 7,000 requests each, because every run starts from a fresh clone with no data (see DEPLOYMENTS.md).
 
 ## 13. Tests
 
