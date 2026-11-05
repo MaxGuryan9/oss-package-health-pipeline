@@ -368,7 +368,122 @@ Results print to the terminal during the run and are saved in `logs/dbt.log`, fo
 
 ## 8. Task 4: Validation
 
-_To be written._
+`validate` is a Python task (no dbt) that runs after dbt. It runs every check, logs the results, and raises once at the end if any completeness check failed, so one run lists every problem. Numbers below are from the last flow run (2026-11-04 13:33, `logs/validate.log`).
+
+### Completeness checks
+
+| Check                        | How                                                                                                                                 | Last run                                              |
+|------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------|
+| Landed files → raw tables    | Every distinct `(repo, id)` in the landed JSON, in `data/raw/` **and** every `data/archive/raw_*/` folder, must be in the raw table | 12 of 12 repo × endpoint pairs: 0 missing             |
+| Raw → staging                | Raw row count minus rows staging drops on purpose (`PENDING` reviews, draft releases) must equal the staging row count              | 12 of 12 match (0 dropped rows this run)              |
+| Commits every complete month | Every repo has at least one commit in every complete month (the run month is exempt)                                                | 1 zero-commit month, passed by the sanity check below |
+
+**Zero-commit sanity check (an addition to the README rule).** A complete month with 0 commits fails, unless that month also had 0 merged PRs. Every merge adds a commit, so a month with no merges and no commits means an inactive repo, not lost data. It is logged as a warning:
+
+```
+WARNING [dask/dask] 2026-10: 0 commits. Passed by the secondary sanity check (0 merged PRs, 64 opened): the repo was inactive that month, not missing data.
+```
+
+The archive folders are checked too, so the check covers every record ever landed, not only the latest incremental run's files.
+
+### Outliers
+
+All flagged records are **kept**: none are capped or dropped. They are real merges and real work, and the statistics use medians and 90th percentiles, which a few extreme values barely move.
+
+**Time to merge: 55 PRs flagged.** PRs get separate cutoffs by author type, because a wait that is normal for a person means an automated PR got stuck:
+
+| Author | Cutoff                                                                                             | Why this cutoff                                                                                                                                                                  | dask | plotly.py | scikit-learn |
+|--------|----------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------|-----------|--------------|
+| Human  | Above the repo's 99th percentile of merged human PRs (dask 92.5 days, plotly 333.3, sklearn 302.1) | Only PRs far outside the normal range. The 90th percentile would flag 465 human PRs and the 95th 234; the 90th percentile is already reported as part of the typical range below | 9    | 5         | 34           |
+| Bot    | More than 7 days                                                                                   | Bot PRs (dependency updates) normally merge within hours to 3 days                                                                                                               | 3    | 1         | 3            |
+
+Notable: the 5 plotly PRs are all by one author and took 409–492 days, likely a batch of old PRs merged together. The longest overall is scikit-learn #28464 at 777 days.
+
+<details>
+<summary>All 55 flagged PRs (from <code>logs/validate.log</code>)</summary>
+
+```
+[dask/dask] PR #12057 by dependabot[bot] (bot): 134.0 days to merge (cutoff 7.0)
+[dask/dask] PR #12328 by dependabot[bot] (bot): 79.8 days to merge (cutoff 7.0)
+[dask/dask] PR #12334 by dependabot[bot] (bot): 35.6 days to merge (cutoff 7.0)
+[dask/dask] PR #10812 by joanrue (human): 215.3 days to merge (cutoff 92.5)
+[dask/dask] PR #11118 by phofl (human): 160.5 days to merge (cutoff 92.5)
+[dask/dask] PR #12010 by DimitriPapadopoulos (human): 118.3 days to merge (cutoff 92.5)
+[dask/dask] PR #12002 by DimitriPapadopoulos (human): 115.8 days to merge (cutoff 92.5)
+[dask/dask] PR #11965 by faulaire (human): 115.2 days to merge (cutoff 92.5)
+[dask/dask] PR #12024 by DimitriPapadopoulos (human): 96.6 days to merge (cutoff 92.5)
+[dask/dask] PR #11128 by dstansby (human): 93.8 days to merge (cutoff 92.5)
+[dask/dask] PR #12041 by DimitriPapadopoulos (human): 93.8 days to merge (cutoff 92.5)
+[dask/dask] PR #11875 by rjzamora (human): 92.9 days to merge (cutoff 92.5)
+[plotly/plotly.py] PR #5775 by dependabot[bot] (bot): 13.8 days to merge (cutoff 7.0)
+[plotly/plotly.py] PR #5232 by robertoffmoura (human): 491.5 days to merge (cutoff 333.3)
+[plotly/plotly.py] PR #5311 by robertoffmoura (human): 426.6 days to merge (cutoff 333.3)
+[plotly/plotly.py] PR #5262 by robertoffmoura (human): 426.4 days to merge (cutoff 333.3)
+[plotly/plotly.py] PR #5310 by robertoffmoura (human): 425.9 days to merge (cutoff 333.3)
+[plotly/plotly.py] PR #5285 by robertoffmoura (human): 409.2 days to merge (cutoff 333.3)
+[scikit-learn/scikit-learn] PR #33917 by dependabot[bot] (bot): 18.6 days to merge (cutoff 7.0)
+[scikit-learn/scikit-learn] PR #29981 by dependabot[bot] (bot): 8.1 days to merge (cutoff 7.0)
+[scikit-learn/scikit-learn] PR #32981 by dependabot[bot] (bot): 7.1 days to merge (cutoff 7.0)
+[scikit-learn/scikit-learn] PR #28464 by marikabergengren (human): 777.1 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29026 by hchau630 (human): 693.6 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #28760 by jeremiedbb (human): 687.1 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29532 by blitchj (human): 626.7 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29499 by ArturoAmorQ (human): 626.4 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29641 by snath-xoc (human): 571.5 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #28043 by StefanieSenger (human): 540.9 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29661 by EmilyXinyi (human): 512.2 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #30869 by adrinjalali (human): 501.2 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29155 by agitter (human): 491.7 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #31413 by adrinjalali (human): 488.1 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #30859 by adrinjalali (human): 454.1 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #28971 by OmarManzoor (human): 450.0 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29097 by lorentzenchr (human): 445.3 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #28755 by marijavlajic (human): 441.9 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29307 by maf-rnmourao (human): 439.7 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #30508 by lucyleeow (human): 431.7 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29022 by deepyaman (human): 412.9 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #32042 by lorentzenchr (human): 406.6 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #31127 by lorentzenchr (human): 400.5 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29310 by icfaust (human): 400.3 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #28559 by myenugula (human): 391.0 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #30134 by SuccessMoses (human): 378.7 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #30751 by snath-xoc (human): 368.6 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #28981 by cynddl (human): 349.6 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29651 by Shashank1202 (human): 348.9 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #31177 by dschult (human): 334.2 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #31289 by EngineerDanny (human): 329.8 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #32789 by nandan2003 (human): 322.1 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29151 by ArturoAmorQ (human): 320.2 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #30041 by ogrisel (human): 316.3 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #32587 by cakedev0 (human): 314.8 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #29716 by AdrianoCLeao (human): 310.7 days to merge (cutoff 302.1)
+[scikit-learn/scikit-learn] PR #30564 by ogrisel (human): 303.5 days to merge (cutoff 302.1)
+```
+
+</details>
+
+**Weekly commits: 4 weeks flagged.** Cutoff: above Q3 + 3 × IQR of that repo's weekly commit counts (Tukey's "far out" rule). Bot commits are counted so an automated burst would show; none of the 4 weeks had any.
+
+| Repo         | Week of    | Commits | Bot commits | Cutoff |
+|--------------|------------|---------|-------------|--------|
+| dask         | 2024-01-08 | 77      | 0           | 46     |
+| dask         | 2024-01-15 | 75      | 0           | 46     |
+| plotly.py    | 2024-10-21 | 98      | 0           | 93     |
+| scikit-learn | 2025-10-06 | 83      | 0           | 53     |
+
+### Descriptive statistics
+
+Read from `fct_pull_requests`, `mart_repo_monthly`, and `fct_releases`; no durations are recomputed. Medians and percentiles skip PRs that were never reviewed or never merged (section 7).
+
+| Repo         | First review p50 (h) | First review p90 (h) | Merge p50 (h) | Merge p90 (h) | Commits / week | Releases / year |
+|--------------|----------------------|----------------------|---------------|---------------|----------------|-----------------|
+| dask         | 12.3                 | 211.5                | 12.3          | 216.8         | 9.3            | 15.5            |
+| plotly.py    | 16.1                 | 693.2                | 41.3          | 1,130.1       | 19.1           | 8.8             |
+| scikit-learn | 13.1                 | 275.2                | 36.6          | 837.5         | 22.6           | 5.3             |
+
+Releases per year count full releases only (prereleases excluded, as in section 7), divided by the time from 2024-01-01 to the run.
+
+**Note on dask's releases per year.** dask's GitHub Releases start on 2024-04-19; earlier versions were published as git tags only, which the Releases endpoint does not return. Its 44 releases are therefore divided by a period about 3.5 months longer than the one they cover, so 15.5 per year **understates** its rate. Measured from its first GitHub Release it is 17.3 per year. dask has the most releases per year either way. Release regularity (Task 5) is not affected, because it uses the gaps between releases, not a rate.
 
 ## 9. Task 5: Health model and ranking
 
