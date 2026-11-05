@@ -4,7 +4,38 @@ DS3022 Data Project 2 · rhk2dx · Package set B. The assignment text is in [PRO
 
 ## 1. Overview
 
-_To be written._
+One Prefect flow pulls GitHub activity for three Python data science packages (package set B) and ranks their development communities from healthiest to least healthy.
+
+| Repo | PRs created since 2024-01-01 | Commits since 2024-01-01 |
+|---|---|---|
+| `scikit-learn/scikit-learn` | 5,228 | 3,364 |
+| `dask/dask` | 1,231 | 1,371 |
+| `plotly/plotly.py` | 690 | 2,829 |
+
+Analysis window: 2024-01-01 through the time of each run (35 months, January 2024 to November 2026, as of the last run).
+
+### The flow
+
+`rhk2dx-package-health-flow` in `main.py` runs six tasks in order:
+
+| # | Task | What it does | Output |
+|---|---|---|---|
+| 1 | `extract` (subflow) | Fetches commits, pull requests, PR reviews, and releases for the 3 repos in parallel | `data/raw/<owner>__<repo>/<endpoint>/page_NNNN.json` |
+| 2 | `load` (subflow) | Upserts every landed record into one raw table per endpoint | `raw_*` tables, `_load_state`, `data/raw/_LOADED` |
+| 3 | `dbt_build` | Runs `dbt build`: staging models, fact and mart tables, 43 tests | `stg_*`, `fct_*`, `mart_*` |
+| 4 | `validate` | Python checks from landed files to staging; outliers; descriptive statistics | log only (fails the flow on a mismatch) |
+| 5 | `score_health` | Scores 6 health dimensions from `mart_health_inputs`, weights them, ranks the repos | `health_scores` table |
+| 6 | `plot_health` | Draws 3 plots | `plots/*.png` |
+
+### Result
+
+| Rank | Repo | Health score (0–1) |
+|---|---|---|
+| 1 | `plotly/plotly.py` | 0.676 |
+| 2 | `scikit-learn/scikit-learn` | 0.615 |
+| 3 | `dask/dask` | 0.550 |
+
+With equal weights the order is the same (0.666 / 0.603 / 0.517). Section 9 explains the metrics and weights. Section 11 covers dask's rank: its merging slowed sharply from July 2026 (1 merge each in August and September, against an average of 30.5 per month in 2024–25), and it has not merged a PR since 2026-09-29, though maintainers still review and close PRs.
 
 ## 2. Setup and run
 
