@@ -893,6 +893,9 @@ def deploy() -> None:
             "cpu_limit": "2",
             "memory_request": "2Gi",
             "memory_limit": "4Gi",
+            # our loggers must be routed to Prefect before Prefect starts on the pod (main.py sets this
+            # too, but on the server Prefect is already running when main.py is imported)
+            "env": {"PREFECT_LOGGING_EXTRA_LOGGERS": "extract,load,transform,validate,model,plot"},
         },
     )
 
