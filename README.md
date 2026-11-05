@@ -615,4 +615,29 @@ _To be written after the scheduled deployment and API odometer are built._
 
 ## 13. Tests
 
-_To be written._
+Every Python test works on a temporary folder or a temporary copy of `packages.duckdb`, so the real data and database are never changed. Each test saves its output to `logs/test_logs/<test name>.log`, overwritten on every run, so the latest result can be read without rerunning it. The pipeline's own log lines from a test also go to the normal task logs in `logs/`.
+
+| Task         | Test                       | What it checks                                                                                                                                                                    | API requests |
+|--------------|----------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| 1 Extract    | `test_fetch_pages.py`      | Pagination follows the `Link` header across several pages                                                                                                                         | ~5           |
+| 1 Extract    | `folder_structure_test.py` | Landing files use the README path and format, one file per page, no leftover `.tmp` files                                                                                         | ~5           |
+| 1 Extract    | `pulls_reviews_test.py`    | Pull-request paging stops at the window start; one review call per PR created in the window; a rerun makes 0 requests                                                             | 15–40        |
+| 1 Extract    | `rate_limit_test.py`       | Against a fake GitHub: sleeps until reset when the budget is low, honors `Retry-After`, raises on 403/404/5xx, connection errors, and broken JSON, and sends nothing after Ctrl-C | 0            |
+| 1 Extract    | `resume_test.py`           | After a simulated crash (missing pages plus a half-written `.tmp`), only the missing pages are fetched                                                                            | ~7           |
+| 1 Extract    | `interrupt_test.py`        | A real Ctrl-C stops a running extract within 5 s, logs the warning, and leaves no `.tmp` files                                                                                    | 10–30        |
+| 1 Extract    | `extract_flow_test.py`     | The full extract subflow on a one-week window lands all four endpoints for all three repos; a rerun makes 0 requests                                                              | 50–150       |
+| 1–2          | `incremental_test.py`      | A second extract + load fetches only records since the watermark, archives the first run's files, and loses no rows                                                               | 100–120      |
+| 2 Load       | `load_full_test.py`        | The first full run's files loaded twice give identical row counts; one row per distinct record; 12 `_load_state` rows; `_LOADED` created                                          | 0            |
+| 4 Validation | `validate_test.py`         | `validate` passes on the real data, then fails and names the record after one raw row is deleted                                                                                  | 0            |
+| 5 Model      | `score_test.py`            | `health_scores` has one row per repo ranked 1–3, every score and subscore is between 0 and 1, and a second run gives the same table                                               | 0            |
+| 6 Plot       | `plot_test.py`             | All three PNGs are written and non-empty                                                                                                                                          | 0            |
+
+Task 3's tests are the dbt tests (section 7), which run inside the flow.
+
+To run them all (about 200–360 API requests in total, a few minutes):
+
+```bash
+for t in tests/*_test.py tests/test_fetch_pages.py; do printf "%-32s" "$t"; python "$t" >/dev/null 2>&1 && echo PASS || echo FAIL; done
+```
+
+Last runs (2026-11-04): all 12 passed. A test run outside a flow prints a harmless Prefect warning, `Logger ... attempted to send logs to the API without a flow run id`.
