@@ -56,7 +56,7 @@ uv pip install -r requirements.txt  # or: pip install -r requirements.txt
 export GH_PAT=<your token>
 ```
 
-The token is read only from the `GH_PAT` environment variable (`main.py`). It is never written to a file, and `.gitignore` excludes `.env` files.
+The token is read from the `GH_PAT` environment variable. When that variable is not set, as on the Prefect server during a deployment run, it is loaded from the Prefect Secret block `rhk2dx-pat` instead (`TOKEN` in `main.py`). The token is never written to a file in the repo, and `.gitignore` excludes `.env` files.
 
 Nothing else needs to be set up: the flow runs `dbt deps` itself, and it creates `data/`, `logs/`, and `packages.duckdb` on the first run.
 
@@ -67,6 +67,12 @@ python main.py
 ```
 
 This runs one Prefect flow, `rhk2dx-package-health-flow`: extract → load → dbt build → validate → score → plot.
+
+To publish the monthly scheduled deployment instead (extended item; see section 12 and `DEPLOYMENTS.md`):
+
+```bash
+python main.py --deploy
+```
 
 ### Expected runtime
 
@@ -127,12 +133,13 @@ package-health-project-ds3022/
 │   ├── monthly_trends.png
 │   └── load_vs_rejection.png
 │
+├── DEPLOYMENTS.md                 # our deployment record (top), then the Prefect deployment instructions
+│
 │   # Template reference files (supplied with the assignment, not our work)
 ├── PROJECT_INSTRUCTIONS.md        # the assignment text (was the template's README.md)
 ├── CHECKLIST.md                   # submission checklist
 ├── ASSESSING-HEALTH.md            # background on measuring open source health
 ├── DBT-REFERENCE.md               # dbt layout, profiles, and PrefectDbtRunner reference
-├── DEPLOYMENTS.md                 # Prefect deployment instructions (extended item)
 ├── EXTRAS.md                      # instructor tips
 │
 └── README.md                      # this write-up
