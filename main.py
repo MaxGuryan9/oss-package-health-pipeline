@@ -338,19 +338,26 @@ def read_watermarks() -> dict:
     return watermarks
 
 
-def not_after_ctrl_c(task, task_run, state) -> bool:
-    """Prefect retry condition: retry any failure except a Ctrl-C stop."""
+def retry_if_transient(task, task_run, state) -> bool:
+    """Prefect retry condition: retry only failures that can succeed on a later try.
+
+    Not retried: a Ctrl-C stop, and 4xx errors other than 403/429 (a 404 or 401 fails the same way every time).
+    Retried: 403/429 (rate limits), 5xx (GitHub server errors), timeouts and connection errors, broken JSON.
+    """
     try:
         state.result()
     except RunInterrupted:
         return False
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        return status >= 500 or status in (403, 429)
     except Exception:
         return True
     return True
 
 
 @task(name="fetch-repo", task_run_name="{repo}", retries=3, retry_delay_seconds=[10, 30, 60],
-      retry_condition_fn=not_after_ctrl_c)
+      retry_condition_fn=retry_if_transient)
 def fetch_repo(repo: str, commits_since: str, pulls_since: str, window_start: str) -> int:
     """All four endpoints for one repo: pulls, then their reviews, then commits and releases. Returns requests made."""
     logger.info(f"[{repo}] commits since {commits_since}, pulls updated since {pulls_since}")
