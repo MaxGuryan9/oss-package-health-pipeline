@@ -487,7 +487,68 @@ Releases per year count full releases only (prereleases excluded, as in section 
 
 ## 9. Task 5: Health model and ranking
 
-_To be written._
+`score_health` reads `mart_health_inputs`, turns each metric into a 0–1 subscore (1 = healthiest), combines the subscores with weights, ranks the repos, writes the table `health_scores`, and logs it to `logs/model.log`.
+
+### Metrics (6 metrics, 6 dimensions)
+
+| Dimension                | Metric                   | Definition                                                                                                                                                 | Healthier | dask    | plotly.py | scikit-learn |
+|--------------------------|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|---------|-----------|--------------|
+| Responsiveness           | `pct_reviewed_within_7d` | Share of PRs (created since 2024, at least 7 days old) that got a first non-author, non-bot review within 7 days. Never-reviewed PRs count as not reviewed | higher    | 0.553   | 0.547     | 0.639        |
+| Backlog                  | `pct_open_stale`         | Share of open PRs with no update in more than 180 days                                                                                                     | lower     | 0.211   | 0.151     | 0.341        |
+| Contributor base (trend) | `top_author_share_trend` | Slope per month of the busiest author's share of merged non-bot PRs, over the 34 complete months. A rising share means more dependence on one person       | lower     | +0.0106 | −0.0087   | −0.0001      |
+| Release cadence          | `release_gap_cv`         | Coefficient of variation (std ÷ mean) of days between full releases. Lower = more regular                                                                  | lower     | 0.943   | 0.747     | 0.658        |
+| Activity (trend)         | `commit_trend`           | Slope per month of monthly commits ÷ average monthly commits, over the 34 complete months: change per month as a share of the average                      | higher    | −0.0755 | −0.0065   | −0.0095      |
+| Throughput               | `merge_rate`             | Merged ÷ (merged + closed unmerged), PRs created since 2024                                                                                                | higher    | 0.873   | 0.789     | 0.693        |
+
+**Size normalization:** every metric is a share, a ratio, or a slope divided by the repo's own average, never a raw count. scikit-learn has 7.6 times as many PRs as plotly, but that alone can't raise its score. The contributor metric uses the top author's *share*, not a bus-factor count, because a count of authors grows with project size.
+
+**Trend component:** two metrics are slopes over the full window: `commit_trend` (is activity growing or shrinking?) and `top_author_share_trend` (is the project becoming more or less dependent on one person?). `commit_trend` is the required trend. The second was added because it measures fragility without `commit_trend`'s caveats (commits are not all equally meaningful, and AI-assisted coding changes commit habits; `ASSESSING-HEALTH.md`).
+
+### Standardization: fixed-range min-max
+
+Each metric becomes a subscore with `(value − zero_at) ÷ (one_at − zero_at)`, clipped to 0–1. `zero_at` is the value that scores 0 (least healthy), `one_at` the value that scores 1. For lower-is-better metrics `zero_at > one_at`, so the same formula flips the direction (`SCORE_SPECS` in `main.py`).
+
+| Metric                   | Scores 0 at     | Scores 1 at     | Actual values (dask / plotly / sklearn) | Subscores (dask / plotly / sklearn) |
+|--------------------------|-----------------|-----------------|-----------------------------------------|-------------------------------------|
+| `pct_reviewed_within_7d` | 0               | 1               | 0.553 / 0.547 / 0.639                   | 0.553 / 0.547 / 0.639               |
+| `pct_open_stale`         | 1               | 0               | 0.211 / 0.151 / 0.341                   | 0.789 / 0.849 / 0.659               |
+| `top_author_share_trend` | +0.02 per month | −0.02 per month | +0.0106 / −0.0087 / −0.0001             | 0.235 / 0.719 / 0.503               |
+| `release_gap_cv`         | 2               | 0               | 0.943 / 0.747 / 0.658                   | 0.529 / 0.626 / 0.671               |
+| `commit_trend`           | −0.10 per month | +0.10 per month | −0.0755 / −0.0065 / −0.0095             | 0.123 / 0.467 / 0.453               |
+| `merge_rate`             | 0               | 1               | 0.873 / 0.789 / 0.693                   | 0.873 / 0.789 / 0.693               |
+
+- Shares use their natural 0–1 range (stale share flipped).
+- The other three ranges are my choice: wide enough that every repo falls inside them (no value is clipped), so each repo keeps its real distance from the others. dask's commit trend (−0.0755) is the closest to an end of its range.
+
+**Why fixed ranges instead of the usual min-max across the three repos:** ordinary min-max always gives the best repo 1 and the worst 0 on every metric, however close they are. dask's 55.3% and plotly's 54.7% review rates would become 1.00 and 0.00, a large gap from a 0.6-point difference. Z-scores spread three repos the same way, and ranks keep only the order. Fixed ranges keep close repos close, and a repo's score doesn't change if the repo set changes. The assignment only says "min-max"; the fixed ranges are my design. The ranking is the same under all three methods.
+
+### Weights
+
+Weights sum to 100, in three tiers ranked by how directly each metric measures health and how strong its caveats are. Within a tier, the two metrics were judged equally direct, so they get equal weight.
+
+| Tier | Dimension        | Weight | Why                                                                                                                                                                                                                     |
+|------|------------------|--------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1    | Responsiveness   | 25     | Most direct sign that maintainers keep up with incoming work                                                                                                                                                            |
+| 1    | Backlog          | 25     | Same, from the other end: work nobody returns to                                                                                                                                                                        |
+| 2    | Contributor base | 15     | Important idea (dependence on one person), weaker metric: it measures change, not level, and the slopes are small                                                                                                       |
+| 2    | Release cadence  | 15     | Regular is not always better; scikit-learn has only 15 release gaps to measure                                                                                                                                          |
+| 3    | Activity         | 10     | Commit counts move for reasons other than health (commit habits, AI-assisted coding); the straight-line fit is weak for plotly and scikit-learn (R² 0.01 and 0.11)                                                      |
+| 3    | Throughput       | 10     | Direction holds only up to a point: a higher merge rate means contributions get accepted, but a very high one can mean weak review, and a lower one can mean healthy strictness (scikit-learn rejects many outside PRs) |
+
+### Ranking (`health_scores`, `logs/model.log`)
+
+| Rank | Repo         | Score     | Responsiveness | Backlog | Contributors | Release cadence | Activity | Throughput |
+|------|--------------|-----------|----------------|---------|--------------|-----------------|----------|------------|
+| 1    | plotly.py    | **0.676** | 0.547          | 0.849   | 0.719        | 0.626           | 0.467    | 0.789      |
+| 2    | scikit-learn | **0.615** | 0.639          | 0.659   | 0.503        | 0.671           | 0.453    | 0.693      |
+| 3    | dask         | **0.550** | 0.553          | 0.789   | 0.235        | 0.529           | 0.123    | 0.873      |
+|      | weight       |           | 25             | 25      | 15           | 15              | 10       | 10         |
+
+### Robustness check
+
+The flow also logs the ranking with equal weights (1/6 each; logged only, not stored): plotly 0.666, scikit-learn 0.603, dask 0.517. The order is the same.
+
+This doesn't prove the weights are correct; weights are a judgment. It shows the ranking doesn't depend on them. plotly beats scikit-learn on 4 of 6 dimensions (backlog, contributors, activity, throughput), so the order only flips under extreme weights, such as putting about half the total on responsiveness. Our weights mainly reduce the influence of noisy metrics like commit trend. That narrows dask's gap (its weakest dimensions are activity and contributors) but doesn't change its rank.
 
 ## 10. Task 6: Plots
 
