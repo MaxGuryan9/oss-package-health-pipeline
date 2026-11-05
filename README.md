@@ -246,7 +246,62 @@ When `_LOADED` exists, everything on disk is already in DuckDB. The run moves `d
 
 ## 6. Task 2: Load
 
-_To be written._
+### Raw tables
+
+One table per endpoint, one row per record (`load_table`):
+
+| Table               | `id` (natural key) | `updated_at` from       |
+|---------------------|--------------------|-------------------------|
+| `raw_commits`       | `sha`              | `commit.committer.date` |
+| `raw_pull_requests` | `number`           | `updated_at`            |
+| `raw_pr_reviews`    | `id`               | `submitted_at`          |
+| `raw_releases`      | `id`               | `updated_at`            |
+
+Every table has the columns `repo`, `id`, `updated_at`, `fetched_at` (from the landing file), `source_file`, and `payload` (the full record as JSON), with `PRIMARY KEY (repo, id)`. All other fields stay in `payload`; the dbt staging models extract them.
+
+### Idempotent loads
+
+Each table is loaded with `INSERT OR REPLACE` on `(repo, id)`, so a record that is already in the table is replaced, never duplicated. `tests/load_full_test.py` loads the first full run's 7,291 landed pages twice into an empty database (`logs/test_logs/load_full_test.log`):
+
+```
+            first load                                     second load
+raw_commits: 0 rows before, 7543 after          raw_commits: 7543 rows before, 7543 after
+raw_pull_requests: 0 rows before, 8800 after    raw_pull_requests: 8800 rows before, 8800 after
+raw_pr_reviews: 0 rows before, 21837 after      raw_pr_reviews: 21837 rows before, 21837 after
+raw_releases: 0 rows before, 204 after          raw_releases: 204 rows before, 204 after
+```
+
+The test also checks that PR rows equal the distinct PRs in the files (8,800), and that `_load_state` has 12 rows (3 repos × 4 endpoints).
+
+### Load state and incremental runs
+
+After every table has loaded, `finish_load_task` writes `_load_state` (one row per repo and endpoint: newest `updated_at`, row count, load time) and only then creates `data/raw/_LOADED`.
+
+On the next run, `extract` sees `_LOADED`, moves `data/raw/` to `data/archive/raw_<UTC time>/`, and reads the watermarks (`read_watermarks`):
+
+| Endpoint      | Incremental rule                                                                  |
+|---------------|-----------------------------------------------------------------------------------|
+| Commits       | `since=` the newest loaded commit date                                            |
+| Pull requests | Paging stops at the first page that ends before the newest loaded PR `updated_at` |
+| Reviews       | Fetched only for PRs updated since the watermark (and created since 2024)         |
+| Releases      | Fetched in full (1–2 pages per repo)                                              |
+
+Records fetched again at a watermark boundary are replaced by the upsert, not duplicated.
+
+### Request counts and row counts per run
+
+| Run | Date (local)                                          | Type                                              | API requests | commits | PRs   | reviews | releases |
+|-----|-------------------------------------------------------|---------------------------------------------------|--------------|---------|-------|---------|----------|
+| 1   | Extract 2026-11-01 17:59–18:35; load 2026-11-02 13:22 | Full window (load task written after the extract) | 7,034        | 7,543   | 8,800 | 21,837  | 204      |
+| 2   | 2026-11-02 13:25                                      | Incremental                                       | 61           | 7,549   | 8,811 | 21,871  | 204      |
+| 3   | 2026-11-03 22:57                                      | Incremental (with dbt)                            | 60           | 7,563   | 8,828 | 21,913  | 204      |
+| 4   | 2026-11-04 00:19                                      | Incremental; failed at validation (see note)      | 15           | 7,563   | 8,828 | 21,914  | 204      |
+| 5   | 2026-11-04 00:23                                      | Incremental (with validation)                     | 13           | 7,563   | 8,828 | 21,914  | 204      |
+| 6   | 2026-11-04 13:33                                      | Incremental (full flow)                           | 33           | 7,564   | 8,833 | 21,921  | 204      |
+
+Request counts are from `Extract finished: N API requests this run` in `logs/extract.log`; row counts are from `logs/load.log`. An incremental run needs 13–61 requests instead of 7,034.
+
+> Run 4 completed extract, load, and dbt, then failed when Task 4 opened the database read-only. dbt keeps a read-write connection open in the same process, and DuckDB refuses a second connection with different settings. Task 4 now connects with default settings; run 5 passed 4 minutes later.
 
 ## 7. Task 3: dbt
 
