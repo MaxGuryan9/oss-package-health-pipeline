@@ -552,7 +552,37 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 
 ## 10. Task 6: Plots
 
-_To be written._
+`plot_health` saves three PNGs to `plots/`. Every plot uses the same color per repo (plotly green, scikit-learn blue, dask orange) and lists the repos in rank order.
+
+### Plot 1: Dimension profile
+
+![Health subscores by dimension](plots/dimension_profile.png)
+
+**Dimension profile.** Each group of bars is one scored dimension labeled with its weight, the bars within each group follow the final rank, and the legend gives each repo's rank and score. No repo leads every dimension. plotly ranks first because it has no weak spot. It has the smallest stale backlog (15% of its open PRs untouched for 180+ days, a backlog subscore of 0.85), the best contributor score (0.72), and it is second on throughput and narrowly first on activity. scikit-learn leads responsiveness (0.64) and release cadence (0.67), but 34% of its open PRs are stale. That is the largest stale backlog of the three, so it gets the lowest backlog subscore (0.66) on a dimension worth 25%. dask has the highest throughput (0.87) and a fairly small stale backlog (21%, subscore 0.79), but the lowest contributor (0.24) and activity (0.12) scores. Those two low scores match its merge slowdown since July 2026 and a growing share of merged PRs from its busiest author.
+
+### Plot 2: Monthly trends
+
+![Monthly metrics per repo](plots/monthly_trends.png)
+
+**Monthly trends.** Each column is one repo in rank order. Each row is a monthly measure from `mart_repo_monthly` that relates to one scored dimension, named in the panel subtitle, and the rows are ordered by that dimension's weight tier. These are not the scored metrics themselves, which are single values per repo in `mart_health_inputs`. The colored line is a 3-month rolling mean, the dots are the raw months, and the gray lines are the other two repos.
+
+- **Median first-review time.** scikit-learn stays steady at about 11 to 16 hours. plotly and dask rise together in 2026 (plotly from 6.7 hours in 2025 to 27, dask from 10.5 to 61). A longer wait for a first review means contributors hear back more slowly, a sign that maintainers are falling behind the incoming work. Both repos received more PRs in 2026, most from people new to the project, so a larger review load is a likely cause.
+- **Active PR authors.** plotly and dask have small groups of authors (about 6 to 12 a month) that stay level until a rise in mid to late 2026. scikit-learn has far more and keeps growing, from 51 a month in 2024 to 84 in 2026. A small, steady group can run a healthy project if it keeps up with its work. scikit-learn's growth is mostly first-time contributors (595 of its 655 PR authors in 2026 opened their first PR in our data that year), and its merge ratio fell from 0.83 in 2024 to 0.55 in 2026. The extra authors mostly bring more PRs for maintainers to review and turn down, not more maintainers. dask shows the same pattern on a smaller scale, with 157 first-time authors among its 166 in 2026. A late rise in new authors across all three repos may partly reflect AI-assisted contributions, which `ASSESSING-HEALTH.md` warns about.
+- **Top author's share.** scikit-learn stays near 0.18, so no single person dominates its merges. plotly fell from 0.62 in 2024 to about 0.44, becoming less dependent on one person. dask rose from 0.46 to 0.72 and reaches 1.0 in August and September 2026, but those months had one merge each, so the 1.0 reflects a single PR rather than one person taking over.
+- **Commits.** plotly moves in waves. Its biggest burst (245 and 253 commits in October and November 2024) came just before version 6.0.0 in January 2025, and commits rose again around version 7.0.0 in August 2026, which fits work being pushed ahead of major releases. scikit-learn is steady at about 100 a month with a slower 2026. dask started very high (237 commits in January 2024, 137 of them by one developer) and then fell to near zero. dask is not a new project settling down (its PR numbers were already above 10,000 in 2024), and its active authors went up while its commits went down. Together that points to a project that still receives contributions but is no longer merging them.
+- **PRs opened and merged.** scikit-learn opens about 1,700 PRs a year and merges about 1,200, with a slower 2026 (889 merges in ten months). plotly opens a few more PRs each year and merges a steady 150 to 175. dask's two rows split apart in 2026, with PRs opened rising while merges fell to zero by October.
+
+### Plot 3: Load vs. rejection
+
+![Load vs rejection](plots/load_vs_rejection.png)
+
+**Load vs. rejection.** Each repo's complete months are grouped by how many PRs were opened compared with that repo's own monthly average: quiet (under 0.8×), normal (0.8–1.2×), and busy (over 1.2×). Each bubble's height is the average merge ratio for that group, its size is the average number of active PR authors, and its label gives the merge ratio, authors, and number of months. Measuring load against each repo's own average keeps scikit-learn's size from dominating.
+
+- **plotly handles changes in load best, which fits its first-place rank.** Its merge ratio is the same 0.84 in quiet and normal months, and its author count barely changes between them (6 and 8), so ordinary swings in incoming work don't change how it treats PRs. Only its busy months, with about twice as many authors (13), bring the ratio down to 0.74. dask and scikit-learn instead lose merge ratio at every step up in load while their authors climb steadily (dask 9, 12, 16; scikit-learn 50, 63, 85). plotly's busy months are also spread across all three years, so its pattern reflects load rather than one unusual period.
+- **All three repos merge a smaller share of PRs in their busiest months, and busier months bring more authors.** scikit-learn drops the most, from 0.79 in quiet months to 0.62 in busy ones.
+- **For scikit-learn the drop is mostly a change over time, not a reaction to load.** Five of its seven busy months are in 2026, all seven quiet months are in 2024 and 2025, and its overall merge ratio fell from 0.83 in 2024 to 0.55 in 2026. Within any single year its load and merge ratio barely move together (correlation between −0.14 and +0.03). The plot is consistent with the first-time contributors seen in plot 2, whose PRs scikit-learn merges less often, but it cannot show that a busy month by itself causes more rejections.
+- **For plotly and dask the pattern is weaker and mixed.** Their per-month correlations are −0.32 and −0.08, and within single years they change direction. The bins average away a lot of month-to-month spread, so the lines look cleaner than the monthly data is.
+- **What it means for the score.** A lower merge ratio in scikit-learn's busy recent months reflects a flood of outside PRs it declines, not necessarily weaker maintenance. This is why merge rate carries only 10% of the score (section 9).
 
 ## 11. Data findings and limitations
 
