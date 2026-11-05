@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -19,12 +20,17 @@ matplotlib.use("Agg")
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from prefect import flow, task, unmapped
+from prefect.blocks.system import Secret
+from prefect.runner.storage import GitRepository
+from prefect.schedules import Cron
 from prefect.task_runners import ThreadPoolTaskRunner
 from prefect_dbt import PrefectDbtRunner, PrefectDbtSettings
 
 # --- Configuration ---
 REPOS = ["scikit-learn/scikit-learn", "dask/dask", "plotly/plotly.py"]
 WINDOW_START = "2024-01-01T00:00:00Z"
+GIT_URL = "https://github.com/MaxGuryan9/package-health-project-ds3022.git"
+WORK_POOL = "uvasds-k8s-pool"  # class Kubernetes pool (DEPLOYMENTS.md: keep as written)
 API_BASE = "https://api.github.com/repos/{REPOS}/{TYPE}"
 PER_PAGE = 100
 API_VERSION = "2026-03-10"
@@ -161,8 +167,9 @@ model_logger = logging.getLogger("model")
 plot_logger = logging.getLogger("plot")
 
 
-# set your GH token before running
-TOKEN = os.environ["GH_PAT"]
+# Token: local runs use the GH_PAT env var; a deployment run on the server has no env var,
+# so it loads the Prefect Secret block instead (DEPLOYMENTS.md "Blocks / Secrets")
+TOKEN = os.environ.get("GH_PAT") or Secret.load("rhk2dx-pat").get()
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
     "Accept": "application/vnd.github+json",
@@ -866,5 +873,32 @@ def package_health_flow() -> None:
         logger.info(f"API odometer: {API_REQUESTS} GitHub API requests this flow run")
 
 
+def deploy() -> None:
+    """Publish the flow as a deployment that runs midnight Eastern on the 28th of every month (DEPLOYMENTS.md)."""
+    package_health_flow.from_source(
+        source=GitRepository(
+            url=GIT_URL,
+            branch="main",
+            # private repo: the worker clones with the PAT. Pass the block itself, not .get(),
+            # so only a reference to the block is stored in the deployment
+            credentials={"access_token": Secret.load("rhk2dx-pat")},
+        ),
+        entrypoint="main.py:package_health_flow",
+    ).deploy(
+        name="rhk2dx-deployment",
+        work_pool_name=WORK_POOL,
+        schedule=Cron("0 0 28 * *", timezone="America/New_York"),
+        job_variables={
+            "cpu_request": "2",
+            "cpu_limit": "2",
+            "memory_request": "2Gi",
+            "memory_limit": "4Gi",
+        },
+    )
+
+
 if __name__ == "__main__":
-    package_health_flow()
+    if "--deploy" in sys.argv:
+        deploy()               # python main.py --deploy : publish the monthly deployment
+    else:
+        package_health_flow()  # python main.py          : run the pipeline
