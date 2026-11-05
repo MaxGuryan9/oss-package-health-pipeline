@@ -6,11 +6,11 @@ DS3022 Data Project 2 · rhk2dx · Package set B. The assignment text is in [PRO
 
 One Prefect flow pulls GitHub activity for three Python data science packages (package set B) and ranks their development communities from healthiest to least healthy.
 
-| Repo | PRs created since 2024-01-01 | Commits since 2024-01-01 |
-|---|---|---|
-| `scikit-learn/scikit-learn` | 5,228 | 3,364 |
-| `dask/dask` | 1,231 | 1,371 |
-| `plotly/plotly.py` | 690 | 2,829 |
+| Repo                        | PRs created since 2024-01-01 | Commits since 2024-01-01 |
+|-----------------------------|------------------------------|--------------------------|
+| `scikit-learn/scikit-learn` | 5,228                        | 3,364                    |
+| `dask/dask`                 | 1,231                        | 1,371                    |
+| `plotly/plotly.py`          | 690                          | 2,829                    |
 
 Analysis window: 2024-01-01 through the time of each run (35 months, January 2024 to November 2026, as of the last run).
 
@@ -18,22 +18,22 @@ Analysis window: 2024-01-01 through the time of each run (35 months, January 202
 
 `rhk2dx-package-health-flow` in `main.py` runs six tasks in order:
 
-| # | Task | What it does | Output |
-|---|---|---|---|
-| 1 | `extract` (subflow) | Fetches commits, pull requests, PR reviews, and releases for the 3 repos in parallel | `data/raw/<owner>__<repo>/<endpoint>/page_NNNN.json` |
-| 2 | `load` (subflow) | Upserts every landed record into one raw table per endpoint | `raw_*` tables, `_load_state`, `data/raw/_LOADED` |
-| 3 | `dbt_build` | Runs `dbt build`: staging models, fact and mart tables, 43 tests | `stg_*`, `fct_*`, `mart_*` |
-| 4 | `validate` | Python checks from landed files to staging; outliers; descriptive statistics | log only (fails the flow on a mismatch) |
-| 5 | `score_health` | Scores 6 health dimensions from `mart_health_inputs`, weights them, ranks the repos | `health_scores` table |
-| 6 | `plot_health` | Draws 3 plots | `plots/*.png` |
+| #   | Task                | What it does                                                                         | Output                                               |
+|-----|---------------------|--------------------------------------------------------------------------------------|------------------------------------------------------|
+| 1   | `extract` (subflow) | Fetches commits, pull requests, PR reviews, and releases for the 3 repos in parallel | `data/raw/<owner>__<repo>/<endpoint>/page_NNNN.json` |
+| 2   | `load` (subflow)    | Upserts every landed record into one raw table per endpoint                          | `raw_*` tables, `_load_state`, `data/raw/_LOADED`    |
+| 3   | `dbt_build`         | Runs `dbt build`: staging models, fact and mart tables, 43 tests                     | `stg_*`, `fct_*`, `mart_*`                           |
+| 4   | `validate`          | Python checks from landed files to staging; outliers; descriptive statistics         | log only (fails the flow on a mismatch)              |
+| 5   | `score_health`      | Scores 6 health dimensions from `mart_health_inputs`, weights them, ranks the repos  | `health_scores` table                                |
+| 6   | `plot_health`       | Draws 3 plots                                                                        | `plots/*.png`                                        |
 
 ### Result
 
-| Rank | Repo | Health score (0–1) |
-|---|---|---|
-| 1 | `plotly/plotly.py` | 0.676 |
-| 2 | `scikit-learn/scikit-learn` | 0.615 |
-| 3 | `dask/dask` | 0.550 |
+| Rank | Repo                        | Health score (0–1) |
+|------|-----------------------------|--------------------|
+| 1    | `plotly/plotly.py`          | 0.676              |
+| 2    | `scikit-learn/scikit-learn` | 0.615              |
+| 3    | `dask/dask`                 | 0.550              |
 
 With equal weights the order is the same (0.666 / 0.603 / 0.517). Section 9 explains the metrics and weights. Section 11 covers dask's rank: its merging slowed sharply from July 2026 (1 merge each in August and September, against an average of 30.5 per month in 2024–25), and it has not merged a PR since 2026-09-29, though maintainers still review and close PRs.
 
@@ -70,10 +70,10 @@ This runs one Prefect flow, `rhk2dx-package-health-flow`: extract → load → d
 
 ### Expected runtime
 
-| Run | API requests | Time | Source |
-|---|---|---|---|
-| First run (full window, nothing on disk) | 7,034 | Extract about 35 min; load, dbt, validation, scoring, and plots add under 15 s | `logs/extract_full_run.log` (2026-11-01, 17:59 → 18:35, including a 3-minute deliberate interruption) |
-| Later runs (incremental) | 13–61 | About 20 s for the whole flow | `logs/extract.log` → `logs/plot.log` (2026-11-04: 33 requests, 19 s) |
+| Run                                      | API requests | Time                                                                           | Source                                                                                                |
+|------------------------------------------|--------------|--------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| First run (full window, nothing on disk) | 7,034        | Extract about 35 min; load, dbt, validation, scoring, and plots add under 15 s | `logs/extract_full_run.log` (2026-11-01, 17:59 → 18:35, including a 3-minute deliberate interruption) |
+| Later runs (incremental)                 | 13–61        | About 20 s for the whole flow                                                  | `logs/extract.log` → `logs/plot.log` (2026-11-04: 33 requests, 19 s)                                  |
 
 A first run needs more requests than the 5,000-per-hour limit. In the measured run, GitHub's hourly reset came partway through, so the flow never had to sleep. A run that starts with a full 5,000 budget will use it in about 24 minutes, then sleep until the reset. That makes a first run take up to about 70 minutes.
 
@@ -142,15 +142,15 @@ dbt reads `tests/` for singular tests (`test-paths` in `dbt_project.yml`), so th
 
 **Not committed** (in `.gitignore`), because each is created by running the flow, holds local state, or is not project output:
 
-| Excluded | What it is |
-|---|---|
-| `data/` | Landed API pages (`data/raw/`) and earlier runs' pages (`data/archive/`) |
-| `packages.duckdb` | The database |
-| `logs/` | Task logs, `dbt.log`, and test logs (`logs/test_logs/`) |
-| `target/`, `dbt_packages/` | dbt build output and installed dbt packages |
-| `proj2/` | The virtual environment |
-| `images/` | Example plots from the assignment template; kept locally as the style reference for our plots |
-| `.env`, `__pycache__/`, `tests/output/` | Secrets, Python caches, test scratch files |
+| Excluded                                | What it is                                                                                    |
+|-----------------------------------------|-----------------------------------------------------------------------------------------------|
+| `data/`                                 | Landed API pages (`data/raw/`) and earlier runs' pages (`data/archive/`)                      |
+| `packages.duckdb`                       | The database                                                                                  |
+| `logs/`                                 | Task logs, `dbt.log`, and test logs (`logs/test_logs/`)                                       |
+| `target/`, `dbt_packages/`              | dbt build output and installed dbt packages                                                   |
+| `proj2/`                                | The virtual environment                                                                       |
+| `images/`                               | Example plots from the assignment template; kept locally as the style reference for our plots |
+| `.env`, `__pycache__/`, `tests/output/` | Secrets, Python caches, test scratch files                                                    |
 
 ## 4. Pipeline-wide design
 
@@ -158,14 +158,14 @@ dbt reads `tests/` for singular tests (`test-paths` in `dbt_project.yml`), so th
 
 Only Task 1 talks to the network, so it is the only task with retries.
 
-| Failure | Where | What happens |
-|---|---|---|
-| Any failed request (4xx, 5xx, timeout, connection error) | `github_get` | `response.raise_for_status()` raises `httpx.HTTPError` |
-| Broken JSON in a response | `fetch_pages` | `response.json()` raises `ValueError` |
-| Either of the above | `fetch_pages` | Caught, logged with context (`[repo] endpoint page N failed: <error>`), then re-raised |
-| Secondary rate limit (403/429 with `Retry-After`) | `github_get` | Sleeps the number of seconds GitHub asks for, then raises, so the retry happens after the wait |
-| The re-raised error | `fetch_repo` task, `retry_if_transient` | Transient failures (403/429, 5xx, timeouts, connection errors, broken JSON) are retried up to 3 times, with increasing delays of 10, 30, and 60 s. Pages already on disk are skipped, so a retry costs only the requests that had not succeeded. Permanent failures (other 4xx, such as 404 or 401) fail at once, because they would fail the same way every time. |
-| Ctrl-C | `extract`, `retry_if_transient` | Workers stop at their next request or sleep. A Ctrl-C stop is never retried. |
+| Failure                                                  | Where                                   | What happens                                                                                                                                                                                                                                                                                                                                                       |
+|----------------------------------------------------------|-----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Any failed request (4xx, 5xx, timeout, connection error) | `github_get`                            | `response.raise_for_status()` raises `httpx.HTTPError`                                                                                                                                                                                                                                                                                                             |
+| Broken JSON in a response                                | `fetch_pages`                           | `response.json()` raises `ValueError`                                                                                                                                                                                                                                                                                                                              |
+| Either of the above                                      | `fetch_pages`                           | Caught, logged with context (`[repo] endpoint page N failed: <error>`), then re-raised                                                                                                                                                                                                                                                                             |
+| Secondary rate limit (403/429 with `Retry-After`)        | `github_get`                            | Sleeps the number of seconds GitHub asks for, then raises, so the retry happens after the wait                                                                                                                                                                                                                                                                     |
+| The re-raised error                                      | `fetch_repo` task, `retry_if_transient` | Transient failures (403/429, 5xx, timeouts, connection errors, broken JSON) are retried up to 3 times, with increasing delays of 10, 30, and 60 s. Pages already on disk are skipped, so a retry costs only the requests that had not succeeded. Permanent failures (other 4xx, such as 404 or 401) fail at once, because they would fail the same way every time. |
+| Ctrl-C                                                   | `extract`, `retry_if_transient`         | Workers stop at their next request or sleep. A Ctrl-C stop is never retried.                                                                                                                                                                                                                                                                                       |
 
 Tasks 2–6 work on local files and the database. A failure there (a bad file, a failed dbt test, a validation mismatch) would fail again on a retry, so these tasks have no retries and fail the flow immediately.
 
@@ -173,14 +173,14 @@ Tasks 2–6 work on local files and the database. A failure there (a bad file, a
 
 Each task has its own Python logger with a file handler, and the same logger is routed into Prefect (`PREFECT_LOGGING_EXTRA_LOGGERS`), so every line appears in the terminal, in the Prefect UI, and in a file:
 
-| Task | Log file | What the log records (purpose) |
-|---|---|---|
-| 1 Extract | `logs/extract.log` | Every page fetched with its record count and remaining rate-limit budget; rate-limit sleeps; resume points; total API requests per run |
-| 2 Load | `logs/load.log` | Row count before and after each raw table upsert, which shows loads are idempotent; `_load_state` update and `_LOADED` marker |
-| 3 dbt | `logs/transform.log`, `logs/dbt.log` | `transform.log`: start and finish of `dbt deps` and `dbt build`, with the pass count. `dbt.log`: every model built and every test's PASS/FAIL |
-| 4 Validation | `logs/validate.log` | Completeness checks (landed files → raw → staging, commits every month), flagged outliers, descriptive statistics |
-| 5 Model | `logs/model.log` | The ranked table (score, rank, 6 subscores) and the equal-weight robustness check |
-| 6 Plot | `logs/plot.log` | The path of each saved PNG |
+| Task         | Log file                             | What the log records (purpose)                                                                                                                |
+|--------------|--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| 1 Extract    | `logs/extract.log`                   | Every page fetched with its record count and remaining rate-limit budget; rate-limit sleeps; resume points; total API requests per run        |
+| 2 Load       | `logs/load.log`                      | Row count before and after each raw table upsert, which shows loads are idempotent; `_load_state` update and `_LOADED` marker                 |
+| 3 dbt        | `logs/transform.log`, `logs/dbt.log` | `transform.log`: start and finish of `dbt deps` and `dbt build`, with the pass count. `dbt.log`: every model built and every test's PASS/FAIL |
+| 4 Validation | `logs/validate.log`                  | Completeness checks (landed files → raw → staging, commits every month), flagged outliers, descriptive statistics                             |
+| 5 Model      | `logs/model.log`                     | The ranked table (score, rank, 6 subscores) and the equal-weight robustness check                                                             |
+| 6 Plot       | `logs/plot.log`                      | The path of each saved PNG                                                                                                                    |
 
 Python tests write their own logs to `logs/test_logs/` (section 13).
 
