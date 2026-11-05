@@ -19,7 +19,7 @@ Due: Nov 02, 2026. See [PROJECT_INSTRUCTIONS.md](PROJECT_INSTRUCTIONS.md) for fu
 
 ## The flow (`main.py`)
 
-- [ ] One `@flow` runs all six tasks in order and completes from a clean clone with only a GitHub token set
+- [x] One `@flow` runs all six tasks in order and completes from a clean clone with only a GitHub token set
 - [x] Token read from an environment variable or Prefect Secret block
 - [x] Each task logs to the Prefect logger and to its own log file; dbt's log is saved
 - [x] **Task 1 · Extract:** commits, pull requests, PR reviews, and releases for all three repos, written to `data/raw/` one file per page
@@ -62,7 +62,7 @@ Due: Nov 02, 2026. See [PROJECT_INSTRUCTIONS.md](PROJECT_INSTRUCTIONS.md) for fu
 - [ ] **GraphQL:** PR and review ingestion uses GraphQL with cursor pagination; README logs request counts and runtime for REST vs. GraphQL
 - [x] **Concurrent fetching:** repos are fetched in parallel under a shared rate limiter; README says where this happens in the code
 - [x] **Scheduled deployment:** monthly Prefect deployment (the 28th); `DEPLOYMENTS.md` shows the deployment command and the log of one manually triggered run
-- [x] **API odometer:** total requests per flow run is logged, and your count is: 23 (local incremental run, 2026-11-04; about 7,000 for a full run)
+- [x] **API odometer:** total requests per flow run is logged, and your count is: 7,327 (full run on the Prefect server, 2026-11-04); 23 for a local incremental run
 
 ## After submission
 

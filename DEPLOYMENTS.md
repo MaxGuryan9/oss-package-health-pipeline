@@ -43,7 +43,25 @@ Started with the **Run** button on 2026-11-04 at 22:06 EST (03:06 UTC). Times be
 
 The run started with 1,048 requests left in the hour, because the cancelled run had used the rest. It used them, then slept until GitHub's reset (22:43 EST), as designed. A full run needs about 7,000 requests, so it sleeps once more before it finishes.
 
-**Status at submission:** running (in the rate-limit sleep shown above). The full log is on the class Prefect server under run `whimsical-peacock`.
+The rest of the run (UTC):
+
+```
+04:05:51  Rate limit: 25 left; sleeping 2265s until reset
+04:51:53  Extract finished: 7327 API requests this run
+04:51:55  raw_commits: 0 rows before, 7566 after
+04:52:00  raw_pull_requests: 0 rows before, 8800 after
+04:52:03  raw_pr_reviews: 0 rows before, 21921 after
+04:52:04  raw_releases: 0 rows before, 204 after
+04:52:25  dbt build finished: 51 models and tests passed
+04:52:27  All completeness checks passed
+04:52:27    1    plotly/plotly.py            0.673
+04:52:27    2    scikit-learn/scikit-learn   0.615
+04:52:27    3    dask/dask                   0.550
+04:52:32  Saved .../plots/dimension_profile.png (and monthly_trends.png, load_vs_rejection.png)
+04:52:32  API odometer: 7327 GitHub API requests this flow run
+```
+
+**Final state: Completed** at 04:52:32 UTC (23:52 EST), 1 h 46 min after the start, about 72 minutes of it rate-limit sleep. A fresh clone with only the token from the Secret block ran all six tasks end to end. The odometer (7,327) matches extract's own count. The full log is on the class Prefect server under run `whimsical-peacock`.
 
 ---
 
