@@ -32,6 +32,8 @@ REQUEST_TIMEOUT = 30.0
 RATE_LIMIT_BUFFER = 25
 RATE_LOCK = threading.Lock()  # shared by parallel repo fetches: one token, one budget
 STOP = threading.Event()  # set on Ctrl-C so worker threads stop at their next request or sleep
+API_REQUESTS = 0  # odometer: GitHub API requests sent this flow run, across all threads and retries
+ODOMETER_LOCK = threading.Lock()  # separate from RATE_LOCK, which is held during rate-limit sleeps
 PULLS_PARAMS = {"state": "all", "sort": "updated", "direction": "desc"}
 
 # Task 2: one raw table per endpoint. "id" and "updated_at" are DuckDB expressions on each record (rec).
@@ -185,6 +187,9 @@ def github_get(url: str, params: dict | None = None) -> httpx.Response:
     if STOP.is_set():
         raise RunInterrupted("Stopped by Ctrl-C")
     response = httpx.get(url, headers=HEADERS, params=params, timeout=REQUEST_TIMEOUT)
+    global API_REQUESTS
+    with ODOMETER_LOCK:  # three threads add to it at once
+        API_REQUESTS += 1
 
     # primary limit: once remaining <= buffer, sleep until the reset time (+5s margin)
     remaining = int(response.headers.get("X-RateLimit-Remaining", RATE_LIMIT_BUFFER + 1))
@@ -848,12 +853,17 @@ def plot_health() -> None:
 
 @flow(name="rhk2dx-package-health-flow")
 def package_health_flow() -> None:
-    extract()
-    load()
-    dbt_build()
-    validate()
-    score_health()
-    plot_health()
+    global API_REQUESTS
+    API_REQUESTS = 0
+    try:
+        extract()
+        load()
+        dbt_build()
+        validate()
+        score_health()
+        plot_health()
+    finally:
+        logger.info(f"API odometer: {API_REQUESTS} GitHub API requests this flow run")
 
 
 if __name__ == "__main__":
