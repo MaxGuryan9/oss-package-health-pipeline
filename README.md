@@ -186,7 +186,63 @@ Python tests write their own logs to `logs/test_logs/` (section 13).
 
 ## 5. Task 1: Extract
 
-_To be written._
+### Endpoints and record counts (first full run, 2026-11-01)
+
+| Endpoint      | Request                                                       | scikit-learn       | dask              | plotly.py       |
+|---------------|---------------------------------------------------------------|--------------------|-------------------|-----------------|
+| Pull requests | `/pulls?state=all&sort=updated&direction=desc`                | 6,400              | 1,500             | 900             |
+| PR reviews    | `/pulls/{number}/reviews`, one call per PR created since 2024 | 18,260 (5,207 PRs) | 1,985 (1,224 PRs) | 1,592 (685 PRs) |
+| Commits       | `/commits?since=2024-01-01T00:00:00Z`                         | 3,345              | 1,371             | 2,827           |
+| Releases      | `/releases` (full history, small)                             | 51                 | 44                | 109             |
+
+Total: 7,034 API requests. Every count above is logged per repo and endpoint in `logs/extract_full_run.log`.
+
+- **Pull requests** have no date filter, so they are sorted by `updated` descending and paging stops once a page ends before the window start (`stop_before` in `fetch_pages`).
+- **Reviews** are fetched for every PR created in the window, merged or not (`fetch_reviews`).
+- **Pagination** follows the `Link` header's `rel="next"` URL with `per_page=100` until there is no next page.
+
+### Rate limits
+
+- **Primary limit:** `github_get` reads `X-RateLimit-Remaining` and `X-RateLimit-Reset` on every response. When 25 or fewer requests remain, it sleeps until the reset time plus 5 s. The 25-request buffer leaves room for the other two threads' requests that are already in flight.
+- **Secondary limit:** a 403/429 with `Retry-After` sleeps that many seconds, then raises so Prefect retries (section 4).
+- 5xx errors and timeouts are retried by Prefect (section 4).
+
+### Concurrent fetching (extended item)
+
+`extract` runs one `fetch_repo` task per repo in parallel (`fetch_repo.map(...)` on a `ThreadPoolTaskRunner` with 3 workers). One token means one shared budget, so all threads share `RATE_LOCK`: when one thread sleeps off the rate limit it holds the lock, and every other thread waits at its next request.
+
+### Landing files
+
+`data/raw/<owner>__<repo>/<endpoint>/page_NNNN.json`, one file per response page, in the README format (`repo`, `endpoint`, `url`, `page`, `fetched_at`, `data`) plus one added field:
+
+- `next_url`: the next page's URL (null on the last page). Resume uses it to continue from the last saved page without re-fetching.
+
+Reviews are stored one folder per PR, `reviews/pr_<number>/page_NNNN.json`, so resume can tell which PRs are done.
+
+Pages are written atomically: first to a `.tmp` file, then renamed (`write_page`). A crash mid-write leaves only a `.tmp` file, which the next run deletes; a half-written `.json` page can never exist.
+
+### Resume after an interruption
+
+When there is no `_LOADED` marker, the next run keeps `data/raw/`, skips every page already on disk, and continues from the saved `next_url`. Excerpt from the first full run, stopped with Ctrl-C after scikit-learn's pulls page 54 and restarted (`logs/extract_full_run.log`, lines 170–190):
+
+```
+18:00:01  [scikit-learn/scikit-learn] pulls page 54: 100 records (budget left 4437)
+          ← Ctrl-C; restarted 2m 43s later
+18:02:44  Extract starting (resume): 3 repos, window from 2024-01-01T00:00:00Z
+18:02:45  [plotly/plotly.py] pulls: 9 pages on disk, already complete
+18:02:45  [dask/dask] pulls: 15 pages on disk, already complete
+18:02:45  [dask/dask] commits: 14 pages on disk, already complete
+18:02:45  [scikit-learn/scikit-learn] commits: 34 pages on disk, already complete
+...
+18:02:45  [scikit-learn/scikit-learn] pulls: 54 pages on disk, resuming at page 55
+18:02:47  [scikit-learn/scikit-learn] pulls page 55: 100 records (budget left 4430)
+```
+
+The budget went from 4,437 before the stop to 4,430 after the restart, so the pages already on disk cost no requests.
+
+> **Note on the missing Ctrl-C line.** The warning `Ctrl-C received: stopping workers; pages on disk are kept for resume` was added to `extract` after this full run, so it does not appear in the excerpt above. It is confirmed by `tests/interrupt_test.py`, which sends a real Ctrl-C to a running extract (`logs/test_logs/interrupt_test.log`: the warning is logged and the workers stop 0.7 s later). The full run was not repeated to capture the line: the gap was found too close to the deadline, and a fresh full run costs about 7,000 requests and up to 70 minutes.
+
+When `_LOADED` exists, everything on disk is already in DuckDB. The run moves `data/raw/` to `data/archive/raw_<UTC time>/` (kept for Task 4, instead of deleted) and fetches only records newer than the `_load_state` watermarks (section 6).
 
 ## 6. Task 2: Load
 
