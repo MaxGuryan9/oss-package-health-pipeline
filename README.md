@@ -305,7 +305,66 @@ Request counts are from `Extract finished: N API requests this run` in `logs/ext
 
 ## 7. Task 3: dbt
 
-_To be written._
+`dbt build` runs inside the flow (`dbt_build`, using `PrefectDbtRunner` as in `DBT-REFERENCE.md`). It runs `dbt deps`, then builds every model and runs every test, and raises if any model or test fails. This is the only task that runs dbt. Staging models are views; marts are tables, so the tests read stored results (`dbt_project.yml`). Last run: `PASS=51 ERROR=0` (8 models, 43 tests) in about 4 s.
+
+### Staging models (one per raw table)
+
+| Model               | Columns (from `payload`)                                                                                | Rows dropped                          |
+|---------------------|---------------------------------------------------------------------------------------------------------|---------------------------------------|
+| `stg_commits`       | `sha`, `author_login`, `committed_at` (from `commit.author.date`), `is_bot`                             | none                                  |
+| `stg_pull_requests` | `number`, `author_login`, `state`, created/updated/closed/merged times, `is_bot`                        | none                                  |
+| `stg_pr_reviews`    | `id`, `pr_number` (parsed from `pull_request_url`), `reviewer_login`, `state`, `submitted_at`, `is_bot` | `PENDING` reviews (no `submitted_at`) |
+| `stg_releases`      | `id`, `tag_name`, `published_at`, `prerelease`                                                          | drafts                                |
+
+- Timestamps are cast with `::timestamptz` (GitHub returns UTC; the dbt profile sets `TimeZone: UTC`).
+- Deduplication: `qualify row_number() over (partition by repo, id order by fetched_at desc) = 1` keeps the newest copy of each record.
+
+**Bot rule:** `is_bot = user.type = 'Bot' OR user.login LIKE '%[bot]'`, applied to the PR author, the reviewer, and the commit author, and wrapped in `coalesce(..., false)`. 23 commits have no linked GitHub account (the commit email isn't tied to a user). Their login is NULL, so without the `coalesce` their `is_bot` would be NULL; with it, they count as not bots.
+
+### Fact marts
+
+**`fct_pull_requests`**: one row per PR created on or after 2024-01-01, with the required flags and durations: `is_merged`, `is_closed_unmerged`, `is_open`, `first_review_at`, `hours_to_first_review`, `reviewed_within_7d`, `hours_to_merge`, `hours_to_close`, `is_stale`, `has_approving_review`.
+
+- A review counts only if it is not by the PR author and not by a bot. A review by a deleted account (NULL login) does not count, because it can't be shown to be a non-author.
+- Run time is `max(fetched_at)`, so a rebuild without new data gives the same results.
+- `is_stale` = open and not updated for more than 180 days before run time.
+
+**`fct_releases`**: one row per published release on or after 2024-01-01. `days_since_previous` uses `lag()` over all releases before the window filter, so the first release in the window still measures its gap to the one before it. **Added column:** `days_since_previous_full` is the gap to the previous *full* release (NULL for prereleases). Release regularity in Task 5 uses it, because an rc or beta build is not the same event as a release, and counting it would split one gap into two.
+
+### Aggregate marts
+
+**`mart_repo_monthly`**: one row per repo × month, January 2024 through the run month (35 months × 3 repos). The month list comes from `generate_series` crossed with the repos, so a month with no activity shows 0 instead of disappearing. It has the required columns, plus two:
+
+- `month_index` (0 = January 2024): the x-axis for the trend slopes.
+- `top_author_share`: the share of the month's merged non-bot PRs written by the busiest author. It is NULL when a month has no merges, so an empty month doesn't look perfectly spread out.
+
+**`mart_health_inputs`**: one row per repo, one column per Task 5 metric (section 9). Every column is a share, ratio, or slope, never a raw count. Tasks 4–6 read durations and rates from these marts; no Python code recomputes them.
+
+### How medians treat open PRs
+
+Open PRs are kept in `fct_pull_requests` with `is_open = true`. They are never dropped and never given a fake close date: their `merged_at` and `closed_at` stay NULL, so `hours_to_merge` and `hours_to_close` are NULL.
+
+`median()` skips NULLs. So:
+- **`median_merge_hours`** covers only PRs merged that month; open and closed-unmerged PRs drop out.
+- **`median_first_review_hours`** covers only reviewed PRs; open PRs without a review drop out.
+
+### Tests (43, plus 8 models = 51 in `dbt build`)
+
+| Type         | Where                                      | What it checks                                                                                                                                                                                                                                                                                                                                                                                          |
+|--------------|--------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Generic (12) | `models/staging/schema.yml`                | `unique` + `not_null` on `sha`, review `id`, release `id`; `(repo, number)` unique for PRs (`dbt_utils.unique_combination_of_columns`) and `number` not null; `committed_at` not null; `relationships` from `stg_pr_reviews.pr_number` to `stg_pull_requests.number`; `accepted_values` on PR `state` (`open`, `closed`) and review `state` (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`) |
+| Generic (29) | `models/marts/schema.yml`                  | Unique keys: `(repo, number)`, `(repo, month)`, release `id`, `repo` in `mart_health_inputs`; `not_null` on keys, dates, and every Task 5 metric; `accepted_values` on PR `state`; `dbt_utils.accepted_range`: durations and release gaps ≥ 0, shares and ratios between 0 and 1                                                                                                                        |
+| Singular     | `tests/assert_pr_closed_after_created.sql` | No PR closed or merged before it was created                                                                                                                                                                                                                                                                                                                                                            |
+| Singular     | `tests/assert_review_after_pr_created.sql` | No review submitted before its PR was created                                                                                                                                                                                                                                                                                                                                                           |
+
+Results print to the terminal during the run and are saved in `logs/dbt.log`, for example:
+
+```
+9 of 51 PASS assert_pr_closed_after_created ......... [PASS in 1.29s]
+10 of 51 PASS assert_review_after_pr_created ........ [PASS in 1.38s]
+```
+
+`schema.yml` in each folder describes every model and column; the raw tables are declared as dbt sources in `models/staging/sources.yml`.
 
 ## 8. Task 4: Validation
 
