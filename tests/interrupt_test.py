@@ -2,6 +2,7 @@
 
 Run from the project root:  python tests/interrupt_test.py
 """
+import logging
 import os
 import signal
 import sys
@@ -14,6 +15,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
+
+# Save this test's output to logs/test_logs/<this file's name>.log (overwritten each run, so the file always
+# holds the latest run). Same handler pattern as main.py's per-task logs; main's task loggers also write here.
+TEST_LOG_DIR = main.LOG_DIR / "test_logs"
+TEST_LOG_DIR.mkdir(exist_ok=True)
+test_handler = logging.FileHandler(TEST_LOG_DIR / f"{Path(__file__).stem}.log", mode="w")
+test_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+for name in ["extract", "load", "transform", "validate", "model", "plot"]:
+    logging.getLogger(name).addHandler(test_handler)
+test_log = logging.getLogger(Path(__file__).stem)
+test_log.setLevel(logging.INFO)
+test_log.propagate = False  # say() already prints to the screen; don't print each line twice
+test_log.addHandler(test_handler)
+
+
+def say(message: str) -> None:
+    """Print a result line and save it to this test's log."""
+    print(message)
+    test_log.info(message)
 
 TEST_WINDOW = "2026-09-01T00:00:00Z"  # big enough that the run is still going after 3 seconds
 INTERRUPT_AFTER = 3.0
@@ -42,13 +62,17 @@ def test_interrupt() -> None:
         else:
             raise AssertionError("extract finished before the Ctrl-C; move TEST_WINDOW earlier")
 
-        print(f"\nStopped {stopped_in:.1f}s after Ctrl-C")
+        say(f"\nStopped {stopped_in:.1f}s after Ctrl-C")
         assert stopped_in < MAX_STOP_SECONDS, f"Took {stopped_in:.1f}s to stop (limit {MAX_STOP_SECONDS}s)"
         assert not list(main.RAW_DIR.rglob("*.tmp")), "Leftover .tmp files"
         log_text = (main.LOG_DIR / "extract.log").read_text()
         assert "Ctrl-C received" in log_text, "Ctrl-C warning missing from extract.log"
-        print("All interrupt checks passed")
+        say("All interrupt checks passed")
 
 
 if __name__ == "__main__":
-    test_interrupt()
+    try:
+        test_interrupt()
+    except Exception:
+        test_log.exception("Test failed")  # save failures too, with the traceback
+        raise

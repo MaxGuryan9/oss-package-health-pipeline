@@ -4,6 +4,7 @@ Run from the project root:  python tests/folder_structure_test.py
 Keep the files to inspect:  python tests/folder_structure_test.py --keep   (written to tests/output/)
 """
 import json
+import logging
 import shutil
 import sys
 import tempfile
@@ -13,6 +14,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
+
+# Save this test's output to logs/test_logs/<this file's name>.log (overwritten each run, so the file always
+# holds the latest run). Same handler pattern as main.py's per-task logs; main's task loggers also write here.
+TEST_LOG_DIR = main.LOG_DIR / "test_logs"
+TEST_LOG_DIR.mkdir(exist_ok=True)
+test_handler = logging.FileHandler(TEST_LOG_DIR / f"{Path(__file__).stem}.log", mode="w")
+test_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+for name in ["extract", "load", "transform", "validate", "model", "plot"]:
+    logging.getLogger(name).addHandler(test_handler)
+test_log = logging.getLogger(Path(__file__).stem)
+test_log.setLevel(logging.INFO)
+test_log.propagate = False  # say() already prints to the screen; don't print each line twice
+test_log.addHandler(test_handler)
+
+
+def say(message: str) -> None:
+    """Print a result line and save it to this test's log."""
+    print(message)
+    test_log.info(message)
 
 REQUIRED_KEYS = {"repo", "endpoint", "url", "page", "fetched_at", "next_url", "data"}
 KEEP_DIR = Path(__file__).resolve().parent / "output"
@@ -34,7 +54,7 @@ def test_folder_structure(keep: bool = False) -> None:
         )
 
         files = sorted(out_dir.glob("page_*.json"))
-        print(f"{len(records)} records in {len(files)} files: {files[0].name} .. {files[-1].name}")
+        say(f"{len(records)} records in {len(files)} files: {files[0].name} .. {files[-1].name}")
 
         # One file per page, numbered page_0001, page_0002, ... with no gaps.
         expected = [f"page_{n:04d}.json" for n in range(1, len(files) + 1)]
@@ -52,11 +72,15 @@ def test_folder_structure(keep: bool = False) -> None:
         # The rename step left no temp files behind.
         assert not list(out_dir.glob("*.tmp")), "Leftover .tmp files"
 
-        print("page_0001.json url:", json.loads(files[0].read_text())["url"])
-        print("All landing-file checks passed")
+        say(f"page_0001.json url: {json.loads(files[0].read_text())['url']}")
+        say("All landing-file checks passed")
         if keep:
-            print(f"Files kept in {out_dir}")
+            say(f"Files kept in {out_dir}")
 
 
 if __name__ == "__main__":
-    test_folder_structure(keep="--keep" in sys.argv)
+    try:
+        test_folder_structure(keep="--keep" in sys.argv)
+    except Exception:
+        test_log.exception("Test failed")  # save failures too, with the traceback
+        raise

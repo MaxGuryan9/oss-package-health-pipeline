@@ -3,6 +3,7 @@
 Run from the project root:  python tests/pulls_reviews_test.py
 """
 import json
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -11,6 +12,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
+
+# Save this test's output to logs/test_logs/<this file's name>.log (overwritten each run, so the file always
+# holds the latest run). Same handler pattern as main.py's per-task logs; main's task loggers also write here.
+TEST_LOG_DIR = main.LOG_DIR / "test_logs"
+TEST_LOG_DIR.mkdir(exist_ok=True)
+test_handler = logging.FileHandler(TEST_LOG_DIR / f"{Path(__file__).stem}.log", mode="w")
+test_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+for name in ["extract", "load", "transform", "validate", "model", "plot"]:
+    logging.getLogger(name).addHandler(test_handler)
+test_log = logging.getLogger(Path(__file__).stem)
+test_log.setLevel(logging.INFO)
+test_log.propagate = False  # say() already prints to the screen; don't print each line twice
+test_log.addHandler(test_handler)
+
+
+def say(message: str) -> None:
+    """Print a result line and save it to this test's log."""
+    print(message)
+    test_log.info(message)
 
 CUTOFF = "2026-09-01T00:00:00Z"  # stands in for WINDOW_START so the test stays small
 PULLS_PARAMS = {"state": "all", "sort": "updated", "direction": "desc"}
@@ -47,30 +67,34 @@ def test_pulls_and_reviews() -> None:
 
         # 1. Pulls stop date.
         pages = [json.loads(f.read_text()) for f in sorted(pulls_dir.glob("page_*.json"))]
-        print(f"1. Pulls: {len(prs)} PRs in {len(pages)} pages")
+        say(f"1. Pulls: {len(prs)} PRs in {len(pages)} pages")
         for p in pages[:-1]:
             assert p["data"][-1]["updated_at"] >= CUTOFF, f"Page {p['page']} should have triggered the stop"
         assert pages[-1]["next_url"] is None, "Last pulls page should have next_url = null"
         last_updated = pages[-1]["data"][-1]["updated_at"] if pages[-1]["data"] else "n/a"
-        print(f"   last PR on last page updated {last_updated} (cutoff {CUTOFF})")
+        say(f"   last PR on last page updated {last_updated} (cutoff {CUTOFF})")
 
         # 2. One review folder per PR created on or after the cutoff, none for older PRs.
         expected = {f"pr_{pr['number']}" for pr in prs if pr["created_at"] >= CUTOFF}
         folders = {d.name for d in reviews_dir.iterdir()} if reviews_dir.exists() else set()
-        print(f"2. Reviews: {len(expected)} PRs created since cutoff, {len(folders)} review folders, "
+        say(f"2. Reviews: {len(expected)} PRs created since cutoff, {len(folders)} review folders, "
               f"{len(reviews)} reviews")
         assert expected, "No PRs created since the cutoff; move CUTOFF earlier"
         assert folders == expected, f"Folders {sorted(folders)} != expected {sorted(expected)}"
-        print(f"   total requests: {n}")
+        say(f"   total requests: {n}")
 
         # 3. Rerun: everything is on disk, so nothing is fetched.
         prs2, reviews2, n2 = fetch_both(pulls_dir, reviews_dir)
-        print(f"3. Rerun: {len(prs2)} PRs, {len(reviews2)} reviews, {n2} requests")
+        say(f"3. Rerun: {len(prs2)} PRs, {len(reviews2)} reviews, {n2} requests")
         assert n2 == 0, f"Expected 0 requests on rerun, got {n2}"
         assert len(prs2) == len(prs) and len(reviews2) == len(reviews)
 
-        print("All pulls/reviews checks passed")
+        say("All pulls/reviews checks passed")
 
 
 if __name__ == "__main__":
-    test_pulls_and_reviews()
+    try:
+        test_pulls_and_reviews()
+    except Exception:
+        test_log.exception("Test failed")  # save failures too, with the traceback
+        raise

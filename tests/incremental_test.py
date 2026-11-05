@@ -3,6 +3,7 @@
 Run from the project root:  python tests/incremental_test.py
 """
 import json
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -13,6 +14,25 @@ import duckdb
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
+
+# Save this test's output to logs/test_logs/<this file's name>.log (overwritten each run, so the file always
+# holds the latest run). Same handler pattern as main.py's per-task logs; main's task loggers also write here.
+TEST_LOG_DIR = main.LOG_DIR / "test_logs"
+TEST_LOG_DIR.mkdir(exist_ok=True)
+test_handler = logging.FileHandler(TEST_LOG_DIR / f"{Path(__file__).stem}.log", mode="w")
+test_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+for name in ["extract", "load", "transform", "validate", "model", "plot"]:
+    logging.getLogger(name).addHandler(test_handler)
+test_log = logging.getLogger(Path(__file__).stem)
+test_log.setLevel(logging.INFO)
+test_log.propagate = False  # say() already prints to the screen; don't print each line twice
+test_log.addHandler(test_handler)
+
+
+def say(message: str) -> None:
+    """Print a result line and save it to this test's log."""
+    print(message)
+    test_log.info(message)
 
 TEST_WINDOW = "2026-10-25T00:00:00Z"
 
@@ -38,19 +58,19 @@ def test_incremental() -> None:
         first = main.extract(window_start=TEST_WINDOW)
         main.load()
         counts1 = table_counts()
-        print(f"\n1. Full run:        {first} requests, {counts1}")
+        say(f"\n1. Full run:        {first} requests, {counts1}")
 
         # 2. Incremental run: _LOADED exists, so data/raw is archived and only records since the watermark are fetched.
         watermarks = main.read_watermarks()
         second = main.extract(window_start=TEST_WINDOW)
         main.load()
         counts2 = table_counts()
-        print(f"2. Incremental run: {second} requests, {counts2}")
+        say(f"2. Incremental run: {second} requests, {counts2}")
 
         # 3. The commits fetch used the watermark as `since` (date only: colons may be URL-encoded).
         since = watermarks[("scikit-learn/scikit-learn", "commits")]
         page1 = json.loads((main.RAW_DIR / "scikit-learn__scikit-learn" / "commits" / "page_0001.json").read_text())
-        print(f"3. sklearn commits watermark {since}; first page URL {page1['url']}")
+        say(f"3. sklearn commits watermark {since}; first page URL {page1['url']}")
         assert since[:10] in page1["url"], "Commits fetch did not use the watermark as 'since'"
         assert second < first, f"Incremental run used {second} requests, full run used {first}"
         for table in counts1:
@@ -58,11 +78,15 @@ def test_incremental() -> None:
 
         # 4. The first run's files were moved to the archive, not deleted.
         archived = list(main.ARCHIVE_DIR.glob("raw_*"))
-        print(f"4. Archive: {[a.name for a in archived]}")
+        say(f"4. Archive: {[a.name for a in archived]}")
         assert len(archived) == 1, f"Expected 1 archived raw_* folder, found {len(archived)}"
         assert list(archived[0].rglob("page_*.json")), "Archived folder has no page files"
-        print("All incremental checks passed")
+        say("All incremental checks passed")
 
 
 if __name__ == "__main__":
-    test_incremental()
+    try:
+        test_incremental()
+    except Exception:
+        test_log.exception("Test failed")  # save failures too, with the traceback
+        raise
