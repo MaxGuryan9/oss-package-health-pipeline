@@ -22,6 +22,9 @@ env/
 ENV/
 .python-version
 
+# --- Template reference images (example plots from the assignment template; kept locally, not project output) ---
+images/
+
 # --- Project data (raw API dumps, database, logs) ---
 data/
 logs/
