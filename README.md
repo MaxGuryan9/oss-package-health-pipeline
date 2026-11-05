@@ -154,7 +154,35 @@ dbt reads `tests/` for singular tests (`test-paths` in `dbt_project.yml`), so th
 
 ## 4. Pipeline-wide design
 
-_To be written._
+### Retries and error handling
+
+Only Task 1 talks to the network, so it is the only task with retries.
+
+| Failure | Where | What happens |
+|---|---|---|
+| Any failed request (4xx, 5xx, timeout, connection error) | `github_get` | `response.raise_for_status()` raises `httpx.HTTPError` |
+| Broken JSON in a response | `fetch_pages` | `response.json()` raises `ValueError` |
+| Either of the above | `fetch_pages` | Caught, logged with context (`[repo] endpoint page N failed: <error>`), then re-raised |
+| Secondary rate limit (403/429 with `Retry-After`) | `github_get` | Sleeps the number of seconds GitHub asks for, then raises, so the retry happens after the wait |
+| The re-raised error | `fetch_repo` task, `retry_if_transient` | Transient failures (403/429, 5xx, timeouts, connection errors, broken JSON) are retried up to 3 times, with increasing delays of 10, 30, and 60 s. Pages already on disk are skipped, so a retry costs only the requests that had not succeeded. Permanent failures (other 4xx, such as 404 or 401) fail at once, because they would fail the same way every time. |
+| Ctrl-C | `extract`, `retry_if_transient` | Workers stop at their next request or sleep. A Ctrl-C stop is never retried. |
+
+Tasks 2–6 work on local files and the database. A failure there (a bad file, a failed dbt test, a validation mismatch) would fail again on a retry, so these tasks have no retries and fail the flow immediately.
+
+### Logging
+
+Each task has its own Python logger with a file handler, and the same logger is routed into Prefect (`PREFECT_LOGGING_EXTRA_LOGGERS`), so every line appears in the terminal, in the Prefect UI, and in a file:
+
+| Task | Log file | What the log records (purpose) |
+|---|---|---|
+| 1 Extract | `logs/extract.log` | Every page fetched with its record count and remaining rate-limit budget; rate-limit sleeps; resume points; total API requests per run |
+| 2 Load | `logs/load.log` | Row count before and after each raw table upsert, which shows loads are idempotent; `_load_state` update and `_LOADED` marker |
+| 3 dbt | `logs/transform.log`, `logs/dbt.log` | `transform.log`: start and finish of `dbt deps` and `dbt build`, with the pass count. `dbt.log`: every model built and every test's PASS/FAIL |
+| 4 Validation | `logs/validate.log` | Completeness checks (landed files → raw → staging, commits every month), flagged outliers, descriptive statistics |
+| 5 Model | `logs/model.log` | The ranked table (score, rank, 6 subscores) and the equal-weight robustness check |
+| 6 Plot | `logs/plot.log` | The path of each saved PNG |
+
+Python tests write their own logs to `logs/test_logs/` (section 13).
 
 ## 5. Task 1: Extract
 
