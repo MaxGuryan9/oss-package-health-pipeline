@@ -94,27 +94,51 @@ curl -s -H "Authorization: Bearer $GH_PAT" https://api.github.com/rate_limit | g
 ## 3. Repository layout
 
 ```
-main.py                     # the Prefect flow and all six tasks
-requirements.txt            # pinned dependencies
-dbt_project.yml             # dbt project: staging = views, marts = tables
-profiles.yml                # dbt connection: DuckDB file packages.duckdb, UTC (no secrets)
-packages.yml, package-lock.yml   # dbt package dbt_utils (installed by `dbt deps` in the flow)
-models/
-  staging/                  # sources.yml, stg_commits, stg_pull_requests, stg_pr_reviews, stg_releases, schema.yml
-  marts/                    # fct_pull_requests, fct_releases, mart_repo_monthly, mart_health_inputs, schema.yml
-tests/
-  assert_*.sql              # dbt singular tests (dbt reads this folder: test-paths in dbt_project.yml)
-  *_test.py, test_fetch_pages.py   # Python tests, run one at a time (section 13)
-plots/                      # the three PNGs written by Task 6 (committed)
-
-# Template reference files (supplied with the assignment, not our work)
-PROJECT_INSTRUCTIONS.md     # the assignment text (was the template's README.md)
-CHECKLIST.md                # submission checklist
-ASSESSING-HEALTH.md         # background on measuring open source health
-DBT-REFERENCE.md            # dbt layout, profiles, and PrefectDbtRunner reference
-DEPLOYMENTS.md              # Prefect deployment instructions (extended item)
-EXTRAS.md                   # instructor tips
+package-health-project-ds3022/
+├── main.py                        # the Prefect flow and all six tasks
+├── requirements.txt               # pinned dependencies
+│
+├── dbt_project.yml                # dbt project: staging = views, marts = tables
+├── profiles.yml                   # dbt connection: packages.duckdb, UTC (no secrets)
+├── packages.yml                   # dbt package dbt_utils (installed by `dbt deps` in the flow)
+├── package-lock.yml               # pinned dbt package version
+├── models/
+│   ├── staging/
+│   │   ├── sources.yml            # raw_* tables declared as dbt sources
+│   │   ├── schema.yml             # staging tests
+│   │   ├── stg_commits.sql
+│   │   ├── stg_pull_requests.sql
+│   │   ├── stg_pr_reviews.sql
+│   │   └── stg_releases.sql
+│   └── marts/
+│       ├── schema.yml             # descriptions and tests for every mart and column
+│       ├── fct_pull_requests.sql
+│       ├── fct_releases.sql
+│       ├── mart_repo_monthly.sql
+│       └── mart_health_inputs.sql
+│
+├── tests/
+│   ├── assert_pr_closed_after_created.sql   # dbt singular test
+│   ├── assert_review_after_pr_created.sql   # dbt singular test
+│   └── *_test.py, test_fetch_pages.py       # Python tests (section 13)
+│
+├── plots/                         # the three PNGs written by Task 6
+│   ├── dimension_profile.png
+│   ├── monthly_trends.png
+│   └── load_vs_rejection.png
+│
+│   # Template reference files (supplied with the assignment, not our work)
+├── PROJECT_INSTRUCTIONS.md        # the assignment text (was the template's README.md)
+├── CHECKLIST.md                   # submission checklist
+├── ASSESSING-HEALTH.md            # background on measuring open source health
+├── DBT-REFERENCE.md               # dbt layout, profiles, and PrefectDbtRunner reference
+├── DEPLOYMENTS.md                 # Prefect deployment instructions (extended item)
+├── EXTRAS.md                      # instructor tips
+│
+└── README.md                      # this write-up
 ```
+
+dbt reads `tests/` for singular tests (`test-paths` in `dbt_project.yml`), so the dbt tests and the Python tests share that folder.
 
 **Not committed** (in `.gitignore`), because each is created by running the flow, holds local state, or is not project output:
 
