@@ -586,7 +586,28 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 
 ## 11. Data findings and limitations
 
-_To be written._
+### What the data shows about each repo
+
+- **dask's merging slowed sharply from July 2026.** It merged 10 PRs in July, 1 each in August and September, and none in October, against an average of 30.5 a month in 2024–25. It has not merged a PR since 2026-09-29 (36 days at the last run). That does not prove it stopped: the gap before that one was 43 days, and maintainers still close PRs (10 since 2026-09-29) and review them (1 approval). Before July 2026 no gap between merges was longer than 21 days.
+- **scikit-learn draws a large and growing number of first-time contributors** (595 of its 655 PR authors in 2026 opened their first PR in our data that year), and it merges a falling share of PRs (merge ratio 0.83 in 2024, 0.71 in 2025, 0.55 in 2026). Its low merge rate reflects outside PRs it declines, which is why merge rate has a low weight.
+- **plotly has the smallest stale backlog** (14 of 93 open PRs), but 21 of its 45 Dependabot PRs are still open. Five PRs by one author were merged after 409–492 days, likely a batch of old work merged together.
+- **Bots wrote few commits** (dask 3.9%, scikit-learn 0.6%, plotly 0.2%), so the bot rule changes little for commit counts.
+
+### Data quirks handled in the pipeline
+
+- **dask's GitHub Releases start on 2024-04-19.** Earlier versions were git tags only, which the Releases endpoint does not return. Its releases per year (15.5) understates its rate (17.3 measured from its first release). Release regularity is not affected.
+- **plotly has 4 prereleases in the window.** They are kept in the data but left out of release regularity and releases per year (section 7).
+- **7 plotly commits have author dates before 2024** (commits fetched by commit date can carry an older author date). They are in `stg_commits` but fall outside the monthly marts.
+- **23 commits have no linked GitHub account.** They count as non-bot (section 7).
+
+### Limitations
+
+- **Medians cover only finished steps.** Review and merge medians skip PRs still waiting, so they can look faster than the real experience of an open PR. The stale-backlog and reviewed-within-7-days shares cover the waiting PRs instead.
+- **"First-time" contributors means first seen in our data.** PR data starts with PRs updated since 2024, so someone whose earlier PRs were all older counts as new.
+- **Commit counts are an imperfect activity measure.** Commit habits differ between projects, and AI-assisted coding can raise commit and PR counts without more real work (`ASSESSING-HEALTH.md`). That is why commit trend has the lowest weight.
+- **The fixed scoring ranges and the weights are judgment calls.** The equal-weight check shows the ranking does not depend on the weights (section 9), but different ranges would change the subscores.
+- **The ranking is a snapshot.** The window grows with every run, so scores move as new months arrive, especially for dask while its merging is slow.
+- **Plot 3 cannot separate load from time.** scikit-learn's busy months are mostly in 2026, when its merge ratio fell for other reasons (section 10).
 
 ## 12. Extended items
 
