@@ -93,7 +93,40 @@ curl -s -H "Authorization: Bearer $GH_PAT" https://api.github.com/rate_limit | g
 
 ## 3. Repository layout
 
-_To be written._
+```
+main.py                     # the Prefect flow and all six tasks
+requirements.txt            # pinned dependencies
+dbt_project.yml             # dbt project: staging = views, marts = tables
+profiles.yml                # dbt connection: DuckDB file packages.duckdb, UTC (no secrets)
+packages.yml, package-lock.yml   # dbt package dbt_utils (installed by `dbt deps` in the flow)
+models/
+  staging/                  # sources.yml, stg_commits, stg_pull_requests, stg_pr_reviews, stg_releases, schema.yml
+  marts/                    # fct_pull_requests, fct_releases, mart_repo_monthly, mart_health_inputs, schema.yml
+tests/
+  assert_*.sql              # dbt singular tests (dbt reads this folder: test-paths in dbt_project.yml)
+  *_test.py, test_fetch_pages.py   # Python tests, run one at a time (section 13)
+plots/                      # the three PNGs written by Task 6 (committed)
+
+# Template reference files (supplied with the assignment, not our work)
+PROJECT_INSTRUCTIONS.md     # the assignment text (was the template's README.md)
+CHECKLIST.md                # submission checklist
+ASSESSING-HEALTH.md         # background on measuring open source health
+DBT-REFERENCE.md            # dbt layout, profiles, and PrefectDbtRunner reference
+DEPLOYMENTS.md              # Prefect deployment instructions (extended item)
+EXTRAS.md                   # instructor tips
+```
+
+**Not committed** (in `.gitignore`), because each is created by running the flow, holds local state, or is not project output:
+
+| Excluded | What it is |
+|---|---|
+| `data/` | Landed API pages (`data/raw/`) and earlier runs' pages (`data/archive/`) |
+| `packages.duckdb` | The database |
+| `logs/` | Task logs, `dbt.log`, and test logs (`logs/test_logs/`) |
+| `target/`, `dbt_packages/` | dbt build output and installed dbt packages |
+| `proj2/` | The virtual environment |
+| `images/` | Example plots from the assignment template; kept locally as the style reference for our plots |
+| `.env`, `__pycache__/`, `tests/output/` | Secrets, Python caches, test scratch files |
 
 ## 4. Pipeline-wide design
 
