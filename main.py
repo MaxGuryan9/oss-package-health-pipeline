@@ -563,6 +563,9 @@ def load() -> None:
     finish_load_task()
 
 
+# INTERVIEW: Runs dbt inside the flow (General 'Single Prefect flow'; Task 3 requires the flow to fail if a model or
+# test fails). PrefectDbtRunner follows DBT-REFERENCE.md:74-91 and raises on failure. `deps` runs first so a clean
+# clone has dbt_utils installed. `build` runs models and tests together in dependency order.
 @task(name="dbt-build", log_prints=True)
 def dbt_build():
     """Task 3: install dbt packages, then build and test every model. Fails if any model or test fails."""
