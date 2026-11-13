@@ -210,16 +210,25 @@ HEADERS = {
 }
 
 
+# INTERVIEW: Our own exception type, so retry_if_transient can tell 'the user pressed Ctrl-C' apart from a real
+# failure and never retry it. Part of the clean-stop design behind Task 1 'Resumability'.
 class RunInterrupted(Exception):
     """Raised in worker threads after Ctrl-C; never retried."""
 
 
+# INTERVIEW: Used instead of time.sleep. STOP.wait sleeps but returns True the moment Ctrl-C sets STOP, so a
+# rate-limit sleep of many minutes ends within seconds instead of blocking the shutdown.
 def pause(seconds: float) -> None:
     """Sleep, but wake early and raise if the run is interrupted."""
     if STOP.wait(seconds):
         raise RunInterrupted("Stopped by Ctrl-C")
 
 
+# INTERVIEW: The single place every API request passes through, so three requirements live here: Task 1 'Primary rate
+# limit' (reads X-RateLimit-Remaining / Reset and sleeps before the budget reaches 0), 'Other HTTP errors' (honors
+# Retry-After on 403/429), and the API odometer extra. Decisions: buffer of 25 plus a 5 s margin; one shared RATE_LOCK
+# so a sleep in one thread pauses all three (the 'shared limiter' the Concurrent fetching extra asks for).
+# raise_for_status turns 4xx/5xx into exceptions for Prefect's retries.
 def github_get(url: str, params: dict | None = None) -> httpx.Response:
     """GET one URL and check quota. Raises httpx.HTTPError on a failed request so Prefect retries the task."""
     with RATE_LOCK:
@@ -251,11 +260,16 @@ def github_get(url: str, params: dict | None = None) -> httpx.Response:
     return response
 
 
+# INTERVIEW: Builds the folder path required by Task 1 'Landing files': data/raw/<owner>__<repo>/<endpoint>. The slash
+# in owner/repo is replaced because it cannot be part of one folder name.
 def landing_dir(repo: str, endpoint: str) -> Path:
     """data/raw/<owner>__<repo>/<endpoint>, per the README landing format."""
     return RAW_DIR / repo.replace("/", "__") / endpoint
 
 
+# INTERVIEW: Atomic write for Task 1 'Resumability': the page is written to a .tmp file and then renamed, and a rename
+# either fully happens or does not. A crash mid-write leaves only a .tmp, never a half-written page_NNNN.json that the
+# resume logic would trust.
 def write_page(file_path: Path, body: dict) -> None:
     """Write one landing file atomically: temp file first, then rename."""
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -264,6 +278,11 @@ def write_page(file_path: Path, body: dict) -> None:
     os.replace(tmp_path, file_path)
 
 
+# INTERVIEW: Core of Task 1. Satisfies 'Pagination' (follows the Link header's next URL with per_page=100 and logs
+# record counts), 'Landing files' (exactly one file per page) and 'Resumability' (reads back pages on disk and
+# continues from the last page's saved next_url, costing 0 requests). Decisions: next_url is stored in each file (an
+# addition to the README format); stop_before ends the pulls endpoint, which has no date filter, once a page is older
+# than the window or watermark.
 def fetch_pages(
     repo: str,
     endpoint: str,
@@ -331,6 +350,9 @@ def fetch_pages(
     return records, requests
 
 
+# INTERVIEW: Task 1 'Review calls': one reviews request per PR created in the window, merged or not. Decision: each PR
+# gets its own folder pr_<n>, so the same fetch_pages resume logic works per PR. quiet=True plus a progress line every
+# 25 PRs keeps thousands of calls from flooding the log.
 def fetch_reviews(
     repo: str,
     prs: list[dict],
@@ -355,6 +377,9 @@ def fetch_reviews(
     return reviews, requests
 
 
+# INTERVIEW: Implements the README's 'Resume or start fresh?' table: _LOADED present means everything on disk is
+# already in DuckDB. Decision: move data/raw to data/archive/raw_<UTC time> instead of deleting it, so Task 4 can
+# still check every file ever landed (EXTRAS.md allows reworking the resume method).
 def prepare_raw_dir() -> str:
     """README 'Resume or start fresh?': _LOADED present means data/raw is in DuckDB.
     Move it to data/archive/raw_<UTC time>/ (instead of deleting it) and start fresh."""
@@ -367,6 +392,9 @@ def prepare_raw_dir() -> str:
     return "resume"
 
 
+# INTERVIEW: Task 2 'Incremental loads': reads the newest updated_at already loaded per repo for commits and pulls, so
+# the next extract only asks GitHub for newer records. Returns an empty dict on the first run (no database or no
+# _load_state yet), which makes that run a full one.
 def read_watermarks() -> dict:
     """{(repo, endpoint): newest updated_at loaded} from _load_state; empty before the first load."""
     if not DB_PATH.exists():
@@ -383,6 +411,10 @@ def read_watermarks() -> dict:
     return watermarks
 
 
+# INTERVIEW: General 'Retries and error handling' asks for retries only where the failure is transient. Prefect calls
+# this after a failed attempt; state.result() re-raises the task's exception so we can check its type. Decision
+# (2026-11-04): it replaced a rule that retried everything except Ctrl-C, where a 404 cost three retries and 100
+# seconds for nothing.
 def retry_if_transient(task, task_run, state) -> bool:
     """Prefect retry condition: retry only failures that can succeed on a later try.
 
@@ -401,6 +433,10 @@ def retry_if_transient(task, task_run, state) -> bool:
     return True
 
 
+# INTERVIEW: One Prefect task per repo; this is where the retries live (Task 1 'Other HTTP errors', General
+# 'Retries'): 3 retries with 10/30/60 s backoff, the course pattern. A retry is cheap because pages already on disk
+# are skipped. Pulls run first because the review calls need the PR list; the last log line gives the record counts
+# per endpoint per repo that 'Pagination' asks for.
 @task(name="fetch-repo", task_run_name="{repo}", retries=3, retry_delay_seconds=[10, 30, 60],
       retry_condition_fn=retry_if_transient)
 def fetch_repo(repo: str, commits_since: str, pulls_since: str, window_start: str) -> int:
@@ -479,6 +515,9 @@ def finish_load_task() -> None:
     load_logger.info(f"_load_state updated; created {LOADED_MARKER}")
 
 
+# INTERVIEW: Task 1 as a subflow. ThreadPoolTaskRunner with one worker per repo plus fetch_repo.map is the 'Concurrent
+# fetching' extra. It decides resume vs fresh, turns the watermarks into per-repo start dates, and on Ctrl-C sets STOP
+# so the worker threads stop. The returned total is the request count quoted for full vs incremental runs.
 @flow(name="extract", task_runner=ThreadPoolTaskRunner(max_workers=len(REPOS)))
 def extract(window_start: str = WINDOW_START) -> int:
     """Task 1: pull commits, PRs, reviews, and releases for all repos to data/raw/. Returns requests made."""
