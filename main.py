@@ -787,6 +787,11 @@ def validate() -> None:
     validate_logger.info("All completeness checks passed")
 
 
+# INTERVIEW: Task 5: builds one SQL statement from SCORE_SPECS that standardizes each metric to 0-1 (fixed-range
+# min-max, clipped), combines them with the weights, ranks the repos and writes health_scores back to the database
+# ('Scoring model', 'Ranking output'). CREATE OR REPLACE makes a rerun give the same table. The equal-weight ranking
+# is logged as a robustness check: it shows the order does not depend on our weights, not that the weights are
+# correct.
 @task(name="score-health")
 def score_health() -> None:
     """Task 5: score each repo per dimension (0-1), combine with SCORE_SPECS weights, rank, save to health_scores."""
