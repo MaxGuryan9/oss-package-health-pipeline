@@ -841,6 +841,9 @@ def score_health() -> None:
         model_logger.info(f"  {rank:<5}{repo:<27}{score:>6.3f}")
 
 
+# INTERVIEW: Shared by all three plots so they have the same title layout (Task 6 'Presentation': titles, one
+# consistent design). Positions are computed in inches from the figure height, so the title block is the same size on
+# a short figure and a tall one.
 def add_titles(fig, title: str, subtitle: str) -> None:
     """Bold left-aligned title with a gray subtitle under it (images/commit_activity.png), then fit the panels below."""
     height = fig.get_figheight()  # inches, so the title area is the same size on every figure
@@ -849,6 +852,9 @@ def add_titles(fig, title: str, subtitle: str) -> None:
     fig.tight_layout(rect=(0, 0, 1, 1 - 1.15 / height))
 
 
+# INTERVIEW: Task 6 'Dimension profile': all three repos across all six scored dimensions, with the final ranking
+# shown in the legend (#rank, repo, score) and in the bar order. Decision: one grouped horizontal bar chart rather
+# than three panels, so the repos can be compared within each dimension.
 def plot_dimension_profile(con: duckdb.DuckDBPyConnection) -> Path:
     """Plot 1: every scored dimension for all three repos, bars in rank order."""
     dimensions = [spec["dimension"] for spec in SCORE_SPECS.values()]
@@ -881,6 +887,10 @@ def plot_dimension_profile(con: duckdb.DuckDBPyConnection) -> Path:
     return path
 
 
+# INTERVIEW: Task 6 'Trends over time': monthly small multiples read from mart_repo_monthly over the full window.
+# Decisions: 6 metric rows x 3 repo columns with the column's repo in color and the other two in gray; 3-month rolling
+# mean to smooth noisy months, raw values as dots; log scale for review time because it is right-skewed; the partial
+# run month is excluded.
 def plot_monthly_trends(con: duckdb.DuckDBPyConnection, repos: list[str]) -> Path:
     """Plot 2: one row per monthly metric, one column per repo, the column's repo highlighted."""
     # 3-month rolling mean per repo and metric (current and 2 previous months), like images/commit_activity.png
@@ -926,6 +936,9 @@ def plot_monthly_trends(con: duckdb.DuckDBPyConnection, repos: list[str]) -> Pat
     return path
 
 
+# INTERVIEW: Task 6 'Relationship plot': a bubble chart with four variables (x = how busy the month was, y = average
+# merge ratio, size = average active PR authors, color = repo). Decision: months are binned into quiet / normal / busy
+# because one bubble per month was unreadable; the y-axis is fixed at 0.5-0.9 so the drops are not exaggerated.
 def plot_load_vs_rejection(con: duckdb.DuckDBPyConnection, repos: list[str]) -> Path:
     """Plot 3: average merge ratio in quiet, normal and busy months; bubble size = average active PR authors."""
     df = con.execute(LOAD_BINS_SQL).df()
@@ -963,6 +976,8 @@ def plot_load_vs_rejection(con: duckdb.DuckDBPyConnection, repos: list[str]) -> 
     return path
 
 
+# INTERVIEW: Task 6 as one task: saves the three PNGs to plots/ and logs each path. It reads the repo order from
+# health_scores so every plot lists the repos from healthiest to least healthy.
 @task(name="plot-health")
 def plot_health() -> None:
     """Task 6: save the three plots as PNG to plots/."""
