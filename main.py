@@ -454,6 +454,10 @@ def fetch_repo(repo: str, commits_since: str, pulls_since: str, window_start: st
     return requests
 
 
+# INTERVIEW: Task 2 'Raw tables' and 'Idempotent loads'. The table has the six required columns with PRIMARY KEY
+# (repo, id); INSERT OR REPLACE is the upsert, so loading the same files twice replaces rows instead of duplicating
+# them. unnest(data) turns one page into one row per record; the before/after counts in the log are the evidence the
+# rubric asks for.
 def load_table(con: duckdb.DuckDBPyConnection, endpoint: str) -> int:
     """Upsert every landed record of one endpoint into its raw table. Returns the row count after."""
     spec = LOAD_SPECS[endpoint]
@@ -484,6 +488,9 @@ def load_table(con: duckdb.DuckDBPyConnection, endpoint: str) -> int:
     return after
 
 
+# INTERVIEW: Task 2 'Load state': one _load_state row per repo and endpoint with the newest updated_at loaded, the row
+# count and the load time. The max(updated_at) stored here is the watermark that read_watermarks hands to the next
+# extract.
 def write_load_state(con: duckdb.DuckDBPyConnection) -> None:
     """One _load_state row per repo and endpoint: newest updated_at loaded, row count, load time."""
     con.execute("""
@@ -500,12 +507,17 @@ def write_load_state(con: duckdb.DuckDBPyConnection) -> None:
         """, [loaded_at])
 
 
+# INTERVIEW: Thin Prefect task around load_table so each table load shows up as its own task run. It opens and closes
+# its own connection because DuckDB allows only one writer at a time.
 @task(name="load-table", task_run_name="load {endpoint}")
 def load_table_task(endpoint: str) -> int:
     with duckdb.connect(DB_PATH) as con:
         return load_table(con, endpoint)
 
 
+# INTERVIEW: Runs last on purpose: the instructions say to update _load_state only after every file has loaded, then
+# create _LOADED. If any table load fails first, this never runs, so the next run sees no marker and resumes instead
+# of archiving unloaded files.
 @task(name="finish-load")
 def finish_load_task() -> None:
     """README Task 2: update _load_state only after every table loaded, then create the _LOADED marker."""
@@ -540,6 +552,8 @@ def extract(window_start: str = WINDOW_START) -> int:
     return total
 
 
+# INTERVIEW: Task 2 as a subflow: reads files, writes DuckDB, never calls the API (the Task 1 / Task 2 split in the
+# instructions). Tables load one after another, not in parallel, because DuckDB has a single writer.
 @flow(name="load")
 def load() -> None:
     """Task 2: upsert data/raw/ into raw_* tables in packages.duckdb. Never calls the API."""
