@@ -7,6 +7,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# INTERVIEW: Covers the Prefect half of General 'Logging' (each task logs through Prefect AND to its own file). It
+# tells Prefect to also capture our six standard-library loggers. setdefault keeps a value that is already set, which
+# matters on the server pod where the deployment sets it first.
 # Route our standard-library "extract", "load" and "transform" loggers into Prefect's logs. Must be set before Prefect is imported.
 os.environ.setdefault("PREFECT_LOGGING_EXTRA_LOGGERS", "extract,load,transform,validate,model,plot")
 
@@ -26,6 +29,9 @@ from prefect.schedules import Cron
 from prefect.task_runners import ThreadPoolTaskRunner
 from prefect_dbt import PrefectDbtRunner, PrefectDbtSettings
 
+# INTERVIEW: Every value someone might change sits here as a named constant, so no number is hidden inside a function.
+# REPOS and WINDOW_START are package set B and the assignment window; PER_PAGE = 100 is the Task 1 Pagination
+# requirement; RATE_LIMIT_BUFFER = 25 is our margin so three parallel threads never reach 0 requests remaining.
 # --- Configuration ---
 REPOS = ["scikit-learn/scikit-learn", "dask/dask", "plotly/plotly.py"]
 WINDOW_START = "2024-01-01T00:00:00Z"
@@ -42,6 +48,9 @@ API_REQUESTS = 0  # odometer: GitHub API requests sent this flow run, across all
 ODOMETER_LOCK = threading.Lock()  # separate from RATE_LOCK, which is held during rate-limit sleeps
 PULLS_PARAMS = {"state": "all", "sort": "updated", "direction": "desc"}
 
+# INTERVIEW: One dict drives all four raw tables, so load_table, validate and the tests share one definition instead
+# of four copies of the same SQL. 'id' is each endpoint's natural key from the Task 2 instructions (commits = sha, PRs
+# = number, reviews and releases = id).
 # Task 2: one raw table per endpoint. "id" and "updated_at" are DuckDB expressions on each record (rec).
 LOAD_SPECS = {
     "commits": {
@@ -62,12 +71,18 @@ LOAD_SPECS = {
     },
 }
 
+# INTERVIEW: Task 4 'Outlier detection' asks us to state the cutoff, so the cutoffs are named constants. Decisions:
+# humans and bots get different cutoffs; 99th percentile for humans because the 90th would flag about 465 PRs that are
+# still part of the normal range (p99 flags 48); Tukey's far-out rule for weekly commits.
 # Task 4: thresholds for outlier detection (README Task 4). Different author types get different cutoffs,
 # because a wait that is normal for a human PR means an automated PR got stuck.
 HUMAN_MERGE_QUANTILE = 0.99  # human PRs: slower than 99% of that repo's merged human PRs; 0.99 (not 0.90) so every flag is far outside the trend
 BOT_MERGE_HOURS = 7 * 24     # bot PRs: automated updates normally merge within hours, so a week means stuck
 COMMIT_BURST_IQR = 3         # weekly commits above Q3 + 3 x IQR are "far outside" (Tukey's far-out rule)
 
+# INTERVIEW: Used by the raw-vs-staging completeness check. Staging drops PENDING reviews and draft releases on
+# purpose (Task 3 instructions), so the check subtracts those rows before comparing counts instead of reporting them
+# as lost data.
 # Task 4: staging rows dropped on purpose (raw count minus these must equal the staging count)
 STAGING_SPECS = {
     "commits": {"model": "stg_commits", "dropped": "false"},
@@ -76,6 +91,10 @@ STAGING_SPECS = {
     "releases": {"model": "stg_releases", "dropped": "(payload->>'draft')::boolean"},
 }
 
+# INTERVIEW: The whole Task 5 scoring model as data: metric, dimension, weight and the two bounds. Decisions:
+# fixed-range min-max instead of relative min-max (which forces best = 1 and worst = 0 even when repos are close);
+# weights 25/25/15/15/10/10 in three tiers by how directly a metric measures health. Bounds and weights are our
+# choice, not from the course files.
 # Task 5: fixed-range min-max scoring. score = (value - zero_at) / (one_at - zero_at), clipped to 0-1.
 # zero_at scores 0 (least healthy), one_at scores 1 (healthiest). Lower-is-better metrics have zero_at > one_at,
 # so the same formula flips them. Fixed bounds (not the 3 repos' min and max) keep close repos close
@@ -95,6 +114,9 @@ SCORE_SPECS = {
     "merge_rate":             {"dimension": "throughput",      "weight": 10, "zero_at": 0,     "one_at": 1},
 }
 
+# INTERVIEW: Task 6 'Presentation' requires a consistent color per repo across all plots, so every plot reads its
+# colors from this one dict. TREND_PANELS lists the rows of plot 2 and EXAMPLE_STYLE copies the look of the template's
+# example image so all three plots share one design.
 # Task 6: one fixed color per repo across every plot (README Presentation criterion)
 REPO_COLORS = {
     "scikit-learn/scikit-learn": "#2a78d6",
@@ -121,6 +143,9 @@ EXAMPLE_STYLE = {
     "xtick.major.size": 0, "ytick.major.size": 0,
     "legend.frameon": False,
 }
+# INTERVIEW: SQL for the relationship plot (Task 6 'Relationship plot': at least three variables). Load is measured
+# against each repo's OWN average so scikit-learn's size does not dominate (same idea as Task 5 size normalization).
+# The 0.8 / 1.2 cutoffs are our choice.
 # Task 6 plot 3: months grouped by PR load relative to the repo's own average (cutoffs 0.8x and 1.2x)
 LOAD_BINS_SQL = """
     WITH months AS (
@@ -140,6 +165,9 @@ LOAD_BINS_SQL = """
 """
 LOAD_BIN_LABELS = ["Quiet months\n(< 0.8x the repo's average)", "Normal months\n(0.8x - 1.2x)", "Busy months\n(> 1.2x)"]
 
+# INTERVIEW: All paths are built from this file's location, not the folder the command is run from, so the flow works
+# from a clean clone and on the server pod (General 'Execution'). The tests overwrite these constants to point at a
+# temp folder so real data is never touched.
 PROJECT_DIR = Path(__file__).resolve().parent
 RAW_DIR = PROJECT_DIR / "data" / "raw"
 ARCHIVE_DIR = PROJECT_DIR / "data" / "archive"
@@ -149,6 +177,8 @@ LOADED_MARKER = RAW_DIR / "_LOADED"
 DB_PATH = PROJECT_DIR / "packages.duckdb"
 DBT_DIR = PROJECT_DIR  # dbt_project.yml and profiles.yml sit next to main.py
 
+# INTERVIEW: Covers the file half of General 'Logging': each task gets its own logs/<name>.log. One loop instead of
+# six copies of the same four lines; a new task only needs its name added to the list.
 # Prefect already puts a handler on the root logger, so attach a file handler to each logger directly.
 # Add a name here for each new task (dbt, validate, model, plot).
 LOG_DIR.mkdir(exist_ok=True)
@@ -167,6 +197,9 @@ model_logger = logging.getLogger("model")
 plot_logger = logging.getLogger("plot")
 
 
+# INTERVIEW: General 'Secrets': the token is never written in the repo. `or` tries the GH_PAT environment variable
+# first, and Secret.load only runs when it is missing, which is the case on the class server (needed for the Scheduled
+# deployment extra).
 # Token: local runs use the GH_PAT env var; a deployment run on the server has no env var,
 # so it loads the Prefect Secret block instead (DEPLOYMENTS.md "Blocks / Secrets")
 TOKEN = os.environ.get("GH_PAT") or Secret.load("rhk2dx-pat").get()
