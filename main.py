@@ -990,6 +990,9 @@ def plot_health() -> None:
         plot_logger.info(f"Saved {path}")
 
 
+# INTERVIEW: General 'Single Prefect flow': one flow runs the six tasks in order, and any exception stops the run. It
+# also holds the API odometer extra: the counter is reset at the start and logged in `finally`, so even a failed run
+# reports how many requests it used.
 @flow(name="rhk2dx-package-health-flow")
 def package_health_flow() -> None:
     global API_REQUESTS
@@ -1005,6 +1008,9 @@ def package_health_flow() -> None:
         logger.info(f"API odometer: {API_REQUESTS} GitHub API requests this flow run")
 
 
+# INTERVIEW: 'Scheduled deployment' extra, following DEPLOYMENTS.md: the class server clones this private repo using
+# the Secret block and runs the flow at midnight Eastern on the 28th of each month. Known limit: each server run
+# starts from a fresh clone with no database, so it is a full run, not an incremental one.
 def deploy() -> None:
     """Publish the flow as a deployment that runs midnight Eastern on the 28th of every month (DEPLOYMENTS.md)."""
     package_health_flow.from_source(
@@ -1032,6 +1038,9 @@ def deploy() -> None:
     )
 
 
+# INTERVIEW: Entry point. `python main.py` runs the pipeline (the README run command); `python main.py --deploy`
+# publishes the deployment instead. Decision: a flag, because putting deploy() directly here as DEPLOYMENTS.md shows
+# would have broken the normal run command.
 if __name__ == "__main__":
     if "--deploy" in sys.argv:
         deploy()               # python main.py --deploy : publish the monthly deployment
