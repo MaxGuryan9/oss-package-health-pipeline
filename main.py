@@ -583,12 +583,18 @@ def dbt_build():
     return result
 
 
+# INTERVIEW: Helper for the first completeness check. Because we archive instead of deleting, landed files live in
+# data/raw AND every data/archive/raw_* folder; this returns the file patterns for all of them, skipping folders with
+# no files for that endpoint (read_json errors on a pattern that matches nothing).
 def landed_globs(spec: dict) -> list[str]:
     """File patterns for one endpoint in data/raw/ and every archived raw_* folder, skipping ones with no files."""
     folders = [RAW_DIR] + sorted(ARCHIVE_DIR.glob("raw_*"))
     return [str(folder / spec["files"]) for folder in folders if any(folder.glob(spec["files"]))]
 
 
+# INTERVIEW: Task 4 'Completeness checks', part 1: every distinct (repo, id) in the landed files must be in the raw
+# table. A LEFT JOIN from the files to the table leaves NULLs where a record is missing, and those are counted. It
+# returns messages instead of raising so validate can list every problem in one run.
 def check_landed_vs_raw(con: duckdb.DuckDBPyConnection) -> list[str]:
     """A1: every distinct (repo, id) in the landed files is in the raw table. Returns failure messages."""
     failures = []
@@ -612,6 +618,9 @@ def check_landed_vs_raw(con: duckdb.DuckDBPyConnection) -> list[str]:
     return failures
 
 
+# INTERVIEW: Task 4 'Completeness checks', part 2: the raw table's row count must match its staging model. Decision:
+# rows that staging drops on purpose (PENDING reviews, draft releases) are subtracted first, so an intended drop is
+# not reported as data loss.
 def check_raw_vs_staging(con: duckdb.DuckDBPyConnection) -> list[str]:
     """A2: raw row count minus intentionally dropped rows equals the staging row count, per repo and endpoint."""
     failures = []
@@ -635,6 +644,9 @@ def check_raw_vs_staging(con: duckdb.DuckDBPyConnection) -> list[str]:
     return failures
 
 
+# INTERVIEW: Task 4 'Completeness checks', part 3: commits in every complete month. Decision: a zero-commit month
+# passes with a warning only if that month also has 0 merged PRs, because every merge adds a commit. This applies to
+# dask in October 2026 (0 commits, 0 merges, 64 PRs opened): inactive, not missing data.
 def check_monthly_commits(con: duckdb.DuckDBPyConnection) -> list[str]:
     """A3: every repo has commits in every complete month.
 
@@ -661,6 +673,10 @@ def check_monthly_commits(con: duckdb.DuckDBPyConnection) -> list[str]:
     return failures
 
 
+# INTERVIEW: Task 4 'Outlier detection': states the cutoff, lists every flagged record, and says what we do with them.
+# Decisions: separate cutoffs for human PRs (repo's 99th percentile) and bot PRs (7 days); weekly commits above Q3 + 3
+# x IQR; all outliers KEPT because they are real work and our statistics are medians and percentiles, which a few
+# extremes do not move.
 def log_outliers(con: duckdb.DuckDBPyConnection) -> None:
     """B: flag slow merges and commit bursts, list them, and keep them all (see README write-up)."""
     # Separate cutoffs per author category: a week is normal for a human PR but means an automated PR got stuck.
@@ -710,6 +726,10 @@ def log_outliers(con: duckdb.DuckDBPyConnection) -> None:
         validate_logger.info(f"  [{repo}] week of {week}: {commits} commits, {bot_commits} by bots (cutoff {cutoff:.0f})")
 
 
+# INTERVIEW: Task 4 'Descriptive statistics': median and 90th percentile time to first review and to merge, commits
+# per week, releases per year, per repo. Durations are read from fct_pull_requests, not recomputed (rubric). Medians,
+# not means, because the durations are heavily right-skewed; releases per year excludes prereleases to match the
+# release-cadence decision.
 def log_descriptive_stats(con: duckdb.DuckDBPyConnection) -> None:
     """C: per-repo medians and 90th percentiles from the marts, commits per week, releases per year."""
     rows = con.execute(f"""
@@ -746,6 +766,9 @@ def log_descriptive_stats(con: duckdb.DuckDBPyConnection) -> None:
         validate_logger.info(f"  {repo:<27}{r50:>11.1f}{r90:>11.1f}{m50:>10.1f}{m90:>10.1f}{cpw:>11.1f}{rpy:>12.1f}")
 
 
+# INTERVIEW: Task 4 as one Python task after dbt (it does not run dbt). Decision: run every check, collect the failure
+# messages, then raise once, so one run shows every problem and any failure still fails the flow. It connects without
+# read_only because dbt, in the same process, still holds a read-write connection (found in the first full-flow run).
 @task(name="validate")
 def validate() -> None:
     """Task 4: end-to-end checks from landed files to raw tables to staging, then outliers and statistics.
