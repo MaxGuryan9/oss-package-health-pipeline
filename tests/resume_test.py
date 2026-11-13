@@ -1,3 +1,8 @@
+# INTERVIEW: GOAL OF THIS TEST: check Task 1 'Resumability' at the level of one endpoint, including the half-written
+# page case the rubric describes. CONFIRMS: after deleting the last two pages and leaving a broken .tmp file, a rerun
+# fetches exactly those two pages, returns the same records in the same order, removes the .tmp, and a further rerun
+# costs 0 requests. CATCHES: starting over, trusting a half-written file, duplicated or missing records after a
+# resume.
 """Manual check that fetch_pages resumes from pages on disk. Costs about 7 API requests.
 
 Run from the project root:  python tests/resume_test.py
@@ -7,11 +12,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+# INTERVIEW: The tests live in tests/ but main.py is one folder up, so the project root is added to Python's search
+# path before `import main`. Importing main needs GH_PAT set, because main reads the token at import time.
 # Make main.py (one folder up) importable when this file is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
 
+# INTERVIEW: Shared block, repeated in every test file (decision: no shared helper module, course style keeps code in
+# single files). It saves this test's output to logs/test_logs/<file name>.log, opened with mode='w' so the file
+# always holds the latest run and can be quoted as evidence in the README.
 # Save this test's output to logs/test_logs/<this file's name>.log (overwritten each run, so the file always
 # holds the latest run). Same handler pattern as main.py's per-task logs; main's task loggers also write here.
 TEST_LOG_DIR = main.LOG_DIR / "test_logs"
@@ -26,6 +36,8 @@ test_log.propagate = False  # say() already prints to the screen; don't print ea
 test_log.addHandler(test_handler)
 
 
+# INTERVIEW: Prints a result line and writes it to the test's log file, so what was on screen is also saved. propagate
+# = False above stops each line from being printed a second time by the root logger.
 def say(message: str) -> None:
     """Print a result line and save it to this test's log."""
     print(message)
@@ -35,6 +47,8 @@ REQUEST_COUNT = 0
 _real_github_get = main.github_get
 
 
+# INTERVIEW: Counts API requests without changing main.py: it wraps the real github_get and replaces main.github_get
+# with the wrapper. This works because fetch_pages looks up github_get by name each time it is called.
 def counting_github_get(*args, **kwargs):
     """Wrap main.github_get to count API requests."""
     global REQUEST_COUNT
@@ -45,6 +59,8 @@ def counting_github_get(*args, **kwargs):
 main.github_get = counting_github_get
 
 
+# INTERVIEW: Helper: resets the request counter, runs fetch_pages on the same folder, and returns the records with the
+# number of requests used. Called three times: full fetch, resume, and rerun.
 def fetch(out_dir: Path) -> tuple[list[dict], int]:
     """Run fetch_pages and return (records, requests used)."""
     global REQUEST_COUNT
@@ -55,6 +71,9 @@ def fetch(out_dir: Path) -> tuple[list[dict], int]:
     return records, REQUEST_COUNT
 
 
+# INTERVIEW: The crash is simulated by deleting page files and writing a truncated .tmp, which is the state a real
+# crash during write_page would leave. Comparing the lists of commit SHAs checks both that nothing is missing and that
+# the order is unchanged.
 def test_resume() -> None:
     main.PER_PAGE = 10  # small pages force several landing files
     with tempfile.TemporaryDirectory() as tmp:
@@ -89,6 +108,8 @@ def test_resume() -> None:
         say("All resume checks passed")
 
 
+# INTERVIEW: Runs the test when the file is executed directly. A failure is written to the log with its traceback and
+# then re-raised, so the log also records failed runs and the command still exits with an error.
 if __name__ == "__main__":
     try:
         test_resume()
