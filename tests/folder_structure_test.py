@@ -1,3 +1,7 @@
+# INTERVIEW: GOAL OF THIS TEST: check the landing format of Task 1 'Landing files'. CONFIRMS: files are named
+# page_0001.json, page_0002.json, ... with no gaps, each has the README keys plus our next_url, the metadata matches,
+# the records in the files add up to what fetch_pages returned, and no .tmp files remain. CATCHES: a wrong path or
+# file name, a missing key, a lost record, a leftover temp file.
 """Manual check that fetch_pages writes landing files in the README format. Costs about 5 API requests.
 
 Run from the project root:  python tests/folder_structure_test.py
@@ -10,11 +14,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+# INTERVIEW: The tests live in tests/ but main.py is one folder up, so the project root is added to Python's search
+# path before `import main`. Importing main needs GH_PAT set, because main reads the token at import time.
 # Make main.py (one folder up) importable when this file is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
 
+# INTERVIEW: Shared block, repeated in every test file (decision: no shared helper module, course style keeps code in
+# single files). It saves this test's output to logs/test_logs/<file name>.log, opened with mode='w' so the file
+# always holds the latest run and can be quoted as evidence in the README.
 # Save this test's output to logs/test_logs/<this file's name>.log (overwritten each run, so the file always
 # holds the latest run). Same handler pattern as main.py's per-task logs; main's task loggers also write here.
 TEST_LOG_DIR = main.LOG_DIR / "test_logs"
@@ -29,6 +38,8 @@ test_log.propagate = False  # say() already prints to the screen; don't print ea
 test_log.addHandler(test_handler)
 
 
+# INTERVIEW: Prints a result line and writes it to the test's log file, so what was on screen is also saved. propagate
+# = False above stops each line from being printed a second time by the root logger.
 def say(message: str) -> None:
     """Print a result line and save it to this test's log."""
     print(message)
@@ -38,6 +49,8 @@ REQUIRED_KEYS = {"repo", "endpoint", "url", "page", "fetched_at", "next_url", "d
 KEEP_DIR = Path(__file__).resolve().parent / "output"
 
 
+# INTERVIEW: PER_PAGE is lowered to 10 so a small fetch still produces several files to check. The --keep option
+# writes the files to tests/output/ (gitignored) so they can be opened and inspected by hand.
 def test_folder_structure(keep: bool = False) -> None:
     # landing_dir builds the README path data/raw/<owner>__<repo>/<endpoint> (no API call).
     assert main.landing_dir("dask/dask", "commits") == main.RAW_DIR / "dask__dask" / "commits"
@@ -78,6 +91,8 @@ def test_folder_structure(keep: bool = False) -> None:
             say(f"Files kept in {out_dir}")
 
 
+# INTERVIEW: Runs the test when the file is executed directly. A failure is written to the log with its traceback and
+# then re-raised, so the log also records failed runs and the command still exits with an error.
 if __name__ == "__main__":
     try:
         test_folder_structure(keep="--keep" in sys.argv)
