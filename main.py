@@ -29,7 +29,7 @@ from prefect_dbt import PrefectDbtRunner, PrefectDbtSettings
 # --- Configuration ---
 REPOS = ["scikit-learn/scikit-learn", "dask/dask", "plotly/plotly.py"]
 WINDOW_START = "2024-01-01T00:00:00Z"
-GIT_URL = "https://github.com/MaxGuryan9/package-health-project-ds3022.git"
+GIT_URL = "https://github.com/MaxGuryan9/oss-package-health-pipeline.git"
 WORK_POOL = "uvasds-k8s-pool"  # shared Kubernetes work pool (docs/course/DEPLOYMENT-INSTRUCTIONS.md: keep as written)
 API_BASE = "https://api.github.com/repos/{REPOS}/{TYPE}"
 PER_PAGE = 100
