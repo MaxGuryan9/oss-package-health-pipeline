@@ -1,10 +1,26 @@
-# Open Source Package Health: GitHub Data Pipeline
+# Open Source Package Health Pipeline
 
-DS3022 Data Project 2 · rhk2dx · Package set B. The assignment text is in [docs/course/PROJECT_INSTRUCTIONS.md](docs/course/PROJECT_INSTRUCTIONS.md).
+An end-to-end data pipeline that measures how healthy an open source project's
+development community is, using its GitHub activity. One Prefect flow pulls
+commits, pull requests, reviews, and releases from the GitHub REST API, loads
+them into DuckDB, models and tests them with dbt, validates the results in
+Python, scores six health dimensions, and ranks the projects. It runs on a
+monthly schedule as a Prefect deployment on Kubernetes.
+
+**Stack:** Python 3.12 · Prefect 3 · DuckDB · dbt (dbt-duckdb) · GitHub REST API · matplotlib
+
+**Highlights**
+- Incremental, resumable extraction: rate-limit aware, concurrent per repo, never re-downloads a landed page
+- Idempotent upserts into DuckDB with load watermarks
+- 8 dbt models and 43 tests (staging, facts, marts); `dbt build` runs inside the flow
+- Python validation from landed JSON to staging, plus outlier detection
+- Weighted health score with fixed-range standardization and an equal-weight robustness check
+
+![Health dimension profile](plots/dimension_profile.png)
 
 ## 1. Overview
 
-One Prefect flow pulls GitHub activity for three Python data science packages (package set B) and ranks their development communities from healthiest to least healthy.
+The flow ranks three Python data science packages from healthiest to least healthy development community.
 
 | Repo                        | PRs created since 2024-01-01 | Commits since 2024-01-01 |
 |-----------------------------|------------------------------|--------------------------|
