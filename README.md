@@ -34,6 +34,124 @@ The flow ranks three Python data science packages from healthiest to least healt
 
 Analysis window: 2024-01-01 through the time of each run (35 months, January 2024 to November 2026, as of the last run).
 
+### Result
+
+| Rank | Repo                        | Health score (0–1) |
+|------|-----------------------------|--------------------|
+| 1    | `plotly/plotly.py`          | 0.676              |
+| 2    | `scikit-learn/scikit-learn` | 0.615              |
+| 3    | `dask/dask`                 | 0.550              |
+
+With equal weights the order is the same (0.666 / 0.603 / 0.517). Section 9 explains the metrics and weights. Section 11 covers dask's rank: its merging slowed sharply from July 2026 (1 merge each in August and September, against an average of 30.5 per month in 2024–25), and it has not merged a PR since 2026-09-29, though maintainers still review and close PRs.
+
+## 11. Data findings and limitations
+
+### What the data shows about each repo
+
+- **dask's merging slowed sharply from July 2026.** It merged 10 PRs in July, 1 each in August and September, and none in October, against an average of 30.5 a month in 2024–25. It has not merged a PR since 2026-09-29 (36 days at the last run). That does not prove it stopped: the gap before that one was 43 days, and maintainers still close PRs (10 since 2026-09-29) and review them (1 approval). Before July 2026 no gap between merges was longer than 21 days.
+- **scikit-learn draws a large and growing number of first-time contributors** (595 of its 655 PR authors in 2026 opened their first PR in our data that year), and it merges a falling share of PRs (merge ratio 0.83 in 2024, 0.71 in 2025, 0.55 in 2026). Its low merge rate reflects outside PRs it declines, which is why merge rate has a low weight.
+- **plotly has the smallest stale backlog** (14 of 93 open PRs), but 21 of its 45 Dependabot PRs are still open. Five PRs by one author were merged after 409–492 days, likely a batch of old work merged together.
+- **Bots wrote few commits** (dask 3.9%, scikit-learn 0.6%, plotly 0.2%), so the bot rule changes little for commit counts.
+
+## 10. Plots
+
+`plot_health` saves three PNGs to `plots/`. Every plot uses the same color per repo (plotly green, scikit-learn blue, dask orange) and lists the repos in rank order.
+
+### Plot 1: Dimension profile
+
+![Health subscores by dimension](plots/dimension_profile.png)
+
+**Dimension profile.** Each group of bars is one scored dimension labeled with its weight, the bars within each group follow the final rank, and the legend gives each repo's rank and score. No repo leads every dimension. plotly ranks first because it has no weak spot. It has the smallest stale backlog (15% of its open PRs untouched for 180+ days, a backlog subscore of 0.85), the best contributor score (0.72), and it is second on throughput and narrowly first on activity. scikit-learn leads responsiveness (0.64) and release cadence (0.67), but 34% of its open PRs are stale. That is the largest stale backlog of the three, so it gets the lowest backlog subscore (0.66) on a dimension worth 25%. dask has the highest throughput (0.87) and a fairly small stale backlog (21%, subscore 0.79), but the lowest contributor (0.24) and activity (0.12) scores. Those two low scores match its merge slowdown since July 2026 and a growing share of merged PRs from its busiest author.
+
+### Plot 2: Monthly trends
+
+![Monthly metrics per repo](plots/monthly_trends.png)
+
+**Monthly trends.** Each column is one repo in rank order. Each row is a monthly measure from `mart_repo_monthly` that relates to one scored dimension, named in the panel subtitle, and the rows are ordered by that dimension's weight tier. These are not the scored metrics themselves, which are single values per repo in `mart_health_inputs`. The colored line is a 3-month rolling mean, the dots are the raw months, and the gray lines are the other two repos.
+
+- **Median first-review time.** scikit-learn stays steady at about 11 to 16 hours. plotly and dask rise together in 2026 (plotly from 6.7 hours in 2025 to 27, dask from 10.5 to 61). A longer wait for a first review means contributors hear back more slowly, a sign that maintainers are falling behind the incoming work. Both repos received more PRs in 2026, most from people new to the project, so a larger review load is a likely cause.
+- **Active PR authors.** plotly and dask have small groups of authors (about 6 to 12 a month) that stay level until a rise in mid to late 2026. scikit-learn has far more and keeps growing, from 51 a month in 2024 to 84 in 2026. A small, steady group can run a healthy project if it keeps up with its work. scikit-learn's growth is mostly first-time contributors (595 of its 655 PR authors in 2026 opened their first PR in our data that year), and its merge ratio fell from 0.83 in 2024 to 0.55 in 2026. The extra authors mostly bring more PRs for maintainers to review and turn down, not more maintainers. dask shows the same pattern on a smaller scale, with 157 first-time authors among its 166 in 2026. A late rise in new authors across all three repos may partly reflect AI-assisted contributions, which [ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md) warns about.
+- **Top author's share.** scikit-learn stays near 0.18, so no single person dominates its merges. plotly fell from 0.62 in 2024 to about 0.44, becoming less dependent on one person. dask rose from 0.46 to 0.72 and reaches 1.0 in August and September 2026, but those months had one merge each, so the 1.0 reflects a single PR rather than one person taking over.
+- **Commits.** plotly moves in waves. Its biggest burst (245 and 253 commits in October and November 2024) came just before version 6.0.0 in January 2025, and commits rose again around version 7.0.0 in August 2026, which fits work being pushed ahead of major releases. scikit-learn is steady at about 100 a month with a slower 2026. dask started very high (237 commits in January 2024, 137 of them by one developer) and then fell to near zero. dask is not a new project settling down (its PR numbers were already above 10,000 in 2024), and its active authors went up while its commits went down. Together that points to a project that still receives contributions but is no longer merging them.
+- **PRs opened and merged.** scikit-learn opens about 1,700 PRs a year and merges about 1,200, with a slower 2026 (889 merges in ten months). plotly opens a few more PRs each year and merges a steady 150 to 175. dask's two rows split apart in 2026, with PRs opened rising while merges fell to zero by October.
+
+### Plot 3: Load vs. rejection
+
+![Load vs rejection](plots/load_vs_rejection.png)
+
+**Load vs. rejection.** Each repo's complete months are grouped by how many PRs were opened compared with that repo's own monthly average: quiet (under 0.8×), normal (0.8–1.2×), and busy (over 1.2×). Each bubble's height is the average merge ratio for that group, its size is the average number of active PR authors, and its label gives the merge ratio, authors, and number of months. Measuring load against each repo's own average keeps scikit-learn's size from dominating.
+
+- **plotly handles changes in load best, which fits its first-place rank.** Its merge ratio is the same 0.84 in quiet and normal months, and its author count barely changes between them (6 and 8), so ordinary swings in incoming work don't change how it treats PRs. Only its busy months, with about twice as many authors (13), bring the ratio down to 0.74. dask and scikit-learn instead lose merge ratio at every step up in load while their authors climb steadily (dask 9, 12, 16; scikit-learn 50, 63, 85). plotly's busy months are also spread across all three years, so its pattern reflects load rather than one unusual period.
+- **All three repos merge a smaller share of PRs in their busiest months, and busier months bring more authors.** scikit-learn drops the most, from 0.79 in quiet months to 0.62 in busy ones.
+- **For scikit-learn the drop is mostly a change over time, not a reaction to load.** Five of its seven busy months are in 2026, all seven quiet months are in 2024 and 2025, and its overall merge ratio fell from 0.83 in 2024 to 0.55 in 2026. Within any single year its load and merge ratio barely move together (correlation between −0.14 and +0.03). The plot is consistent with the first-time contributors seen in plot 2, whose PRs scikit-learn merges less often, but it cannot show that a busy month by itself causes more rejections.
+- **For plotly and dask the pattern is weaker and mixed.** Their per-month correlations are −0.32 and −0.08, and within single years they change direction. The bins average away a lot of month-to-month spread, so the lines look cleaner than the monthly data is.
+- **What it means for the score.** A lower merge ratio in scikit-learn's busy recent months reflects a flood of outside PRs it declines, not necessarily weaker maintenance. This is why merge rate carries only 10% of the score (section 9).
+
+## 9. Health model and ranking
+
+`score_health` reads `mart_health_inputs`, turns each metric into a 0–1 subscore (1 = healthiest), combines the subscores with weights, ranks the repos, writes the table `health_scores`, and logs it to `logs/model.log`.
+
+### Metrics (6 metrics, 6 dimensions)
+
+| Dimension                | Metric                   | Definition                                                                                                                                                 | Healthier | dask    | plotly.py | scikit-learn |
+|--------------------------|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|---------|-----------|--------------|
+| Responsiveness           | `pct_reviewed_within_7d` | Share of PRs (created since 2024, at least 7 days old) that got a first non-author, non-bot review within 7 days. Never-reviewed PRs count as not reviewed | higher    | 0.553   | 0.547     | 0.639        |
+| Backlog                  | `pct_open_stale`         | Share of open PRs with no update in more than 180 days                                                                                                     | lower     | 0.211   | 0.151     | 0.341        |
+| Contributor base (trend) | `top_author_share_trend` | Slope per month of the busiest author's share of merged non-bot PRs, over the 34 complete months. A rising share means more dependence on one person       | lower     | +0.0106 | −0.0087   | −0.0001      |
+| Release cadence          | `release_gap_cv`         | Coefficient of variation (std ÷ mean) of days between full releases. Lower = more regular                                                                  | lower     | 0.943   | 0.747     | 0.658        |
+| Activity (trend)         | `commit_trend`           | Slope per month of monthly commits ÷ average monthly commits, over the 34 complete months: change per month as a share of the average                      | higher    | −0.0755 | −0.0065   | −0.0095      |
+| Throughput               | `merge_rate`             | Merged ÷ (merged + closed unmerged), PRs created since 2024                                                                                                | higher    | 0.873   | 0.789     | 0.693        |
+
+**Size normalization:** every metric is a share, a ratio, or a slope divided by the repo's own average, never a raw count. scikit-learn has 7.6 times as many PRs as plotly, but that alone can't raise its score. The contributor metric uses the top author's *share*, not a bus-factor count, because a count of authors grows with project size.
+
+**Trend component:** two metrics are slopes over the full window: `commit_trend` (is activity growing or shrinking?) and `top_author_share_trend` (is the project becoming more or less dependent on one person?). `top_author_share_trend` was added because it measures fragility without `commit_trend`'s caveats (commits are not all equally meaningful, and AI-assisted coding changes commit habits; [ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)).
+
+### Standardization: fixed-range min-max
+
+Each metric becomes a subscore with `(value − zero_at) ÷ (one_at − zero_at)`, clipped to 0–1. `zero_at` is the value that scores 0 (least healthy), `one_at` the value that scores 1. For lower-is-better metrics `zero_at > one_at`, so the same formula flips the direction (`SCORE_SPECS` in `main.py`).
+
+| Metric                   | Scores 0 at     | Scores 1 at     | Actual values (dask / plotly / sklearn) | Subscores (dask / plotly / sklearn) |
+|--------------------------|-----------------|-----------------|-----------------------------------------|-------------------------------------|
+| `pct_reviewed_within_7d` | 0               | 1               | 0.553 / 0.547 / 0.639                   | 0.553 / 0.547 / 0.639               |
+| `pct_open_stale`         | 1               | 0               | 0.211 / 0.151 / 0.341                   | 0.789 / 0.849 / 0.659               |
+| `top_author_share_trend` | +0.02 per month | −0.02 per month | +0.0106 / −0.0087 / −0.0001             | 0.235 / 0.719 / 0.503               |
+| `release_gap_cv`         | 2               | 0               | 0.943 / 0.747 / 0.658                   | 0.529 / 0.626 / 0.671               |
+| `commit_trend`           | −0.10 per month | +0.10 per month | −0.0755 / −0.0065 / −0.0095             | 0.123 / 0.467 / 0.453               |
+| `merge_rate`             | 0               | 1               | 0.873 / 0.789 / 0.693                   | 0.873 / 0.789 / 0.693               |
+
+- Shares use their natural 0–1 range (stale share flipped).
+- The other three ranges are my choice: wide enough that every repo falls inside them (no value is clipped), so each repo keeps its real distance from the others. dask's commit trend (−0.0755) is the closest to an end of its range.
+
+**Why fixed ranges instead of the usual min-max across the three repos:** ordinary min-max always gives the best repo 1 and the worst 0 on every metric, however close they are. dask's 55.3% and plotly's 54.7% review rates would become 1.00 and 0.00, a large gap from a 0.6-point difference. Z-scores spread three repos the same way, and ranks keep only the order. Fixed ranges keep close repos close, and a repo's score doesn't change if the repo set changes. Plain min-max is the usual choice; the fixed ranges are my design. The ranking is the same under all three methods.
+
+### Weights
+
+Weights sum to 100, in three tiers ranked by how directly each metric measures health and how strong its caveats are. Within a tier, the two metrics were judged equally direct, so they get equal weight.
+
+| Tier | Dimension        | Weight | Why                                                                                                                                                                                                                     |
+|------|------------------|--------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1    | Responsiveness   | 25     | Most direct sign that maintainers keep up with incoming work                                                                                                                                                            |
+| 1    | Backlog          | 25     | Same, from the other end: work nobody returns to                                                                                                                                                                        |
+| 2    | Contributor base | 15     | Important idea (dependence on one person), weaker metric: it measures change, not level, and the slopes are small                                                                                                       |
+| 2    | Release cadence  | 15     | Regular is not always better; scikit-learn has only 15 release gaps to measure                                                                                                                                          |
+| 3    | Activity         | 10     | Commit counts move for reasons other than health (commit habits, AI-assisted coding); the straight-line fit is weak for plotly and scikit-learn (R² 0.01 and 0.11)                                                      |
+| 3    | Throughput       | 10     | Direction holds only up to a point: a higher merge rate means contributions get accepted, but a very high one can mean weak review, and a lower one can mean healthy strictness (scikit-learn rejects many outside PRs) |
+
+### Ranking (`health_scores`, `logs/model.log`)
+
+| Rank | Repo         | Score     | Responsiveness | Backlog | Contributors | Release cadence | Activity | Throughput |
+|------|--------------|-----------|----------------|---------|--------------|-----------------|----------|------------|
+| 1    | plotly.py    | **0.676** | 0.547          | 0.849   | 0.719        | 0.626           | 0.467    | 0.789      |
+| 2    | scikit-learn | **0.615** | 0.639          | 0.659   | 0.503        | 0.671           | 0.453    | 0.693      |
+| 3    | dask         | **0.550** | 0.553          | 0.789   | 0.235        | 0.529           | 0.123    | 0.873      |
+|      | weight       |           | 25             | 25      | 15           | 15              | 10       | 10         |
+
+### Robustness check
+
+The flow also logs the ranking with equal weights (1/6 each; logged only, not stored): plotly 0.666, scikit-learn 0.603, dask 0.517. The order is the same.
+
+This doesn't prove the weights are correct; weights are a judgment. It shows the ranking doesn't depend on them. plotly beats scikit-learn on 4 of 6 dimensions (backlog, contributors, activity, throughput), so the order only flips under extreme weights, such as putting about half the total on responsiveness. Our weights mainly reduce the influence of noisy metrics like commit trend. That narrows dask's gap (its weakest dimensions are activity and contributors) but doesn't change its rank.
+
 ### The flow
 
 `rhk2dx-package-health-flow` in `main.py` runs six tasks in order:
@@ -46,172 +164,6 @@ Analysis window: 2024-01-01 through the time of each run (35 months, January 202
 | 4   | `validate`          | Python checks from landed files to staging; outliers; descriptive statistics         | log only (fails the flow on a mismatch)              |
 | 5   | `score_health`      | Scores 6 health dimensions from `mart_health_inputs`, weights them, ranks the repos  | `health_scores` table                                |
 | 6   | `plot_health`       | Draws 3 plots                                                                        | `plots/*.png`                                        |
-
-### Result
-
-| Rank | Repo                        | Health score (0–1) |
-|------|-----------------------------|--------------------|
-| 1    | `plotly/plotly.py`          | 0.676              |
-| 2    | `scikit-learn/scikit-learn` | 0.615              |
-| 3    | `dask/dask`                 | 0.550              |
-
-With equal weights the order is the same (0.666 / 0.603 / 0.517). Section 9 explains the metrics and weights. Section 11 covers dask's rank: its merging slowed sharply from July 2026 (1 merge each in August and September, against an average of 30.5 per month in 2024–25), and it has not merged a PR since 2026-09-29, though maintainers still review and close PRs.
-
-## 2. Setup and run
-
-### Requirements
-
-- Python 3.12
-- A GitHub personal access token. A classic token with no scopes is enough, because all three repos are public.
-- All Python dependencies are pinned in `requirements.txt` (dbt-core 1.12.6, dbt-duckdb 1.11.1, duckdb 2.0.0, httpx 0.28.1, prefect 3.9.0, prefect-dbt 0.7.25).
-
-### Setup
-
-```bash
-git clone https://github.com/MaxGuryan9/oss-package-health-pipeline.git
-cd oss-package-health-pipeline
-uv venv .venv --python 3.12        # or: python3.12 -m venv .venv
-source .venv/bin/activate
-uv pip install -r requirements.txt  # or: pip install -r requirements.txt
-export GH_PAT=<your token>
-```
-
-The token is read from the `GH_PAT` environment variable. When that variable is not set, as on the Prefect server during a deployment run, it is loaded from the Prefect Secret block `rhk2dx-pat` instead (`TOKEN` in `main.py`). The token is never written to a file in the repo, and `.gitignore` excludes `.env` files.
-
-Nothing else needs to be set up: the flow runs `dbt deps` itself, and it creates `data/`, `logs/`, and `packages.duckdb` on the first run.
-
-### Run
-
-```bash
-python main.py
-```
-
-This runs one Prefect flow, `rhk2dx-package-health-flow`: extract → load → dbt build → validate → score → plot.
-
-To publish the monthly scheduled deployment instead (see section 12 and `DEPLOYMENTS.md`):
-
-```bash
-python main.py --deploy
-```
-
-### Expected runtime
-
-| Run                                      | API requests | Time                                                                           | Source                                                                                                |
-|------------------------------------------|--------------|--------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
-| First run (full window, nothing on disk) | 7,034        | Extract about 35 min; load, dbt, validation, scoring, and plots add under 15 s | `logs/extract_full_run.log` (2026-11-01, 17:59 → 18:35, including a 3-minute deliberate interruption) |
-| Later runs (incremental)                 | 13–61        | About 20 s for the whole flow                                                  | `logs/extract.log` → `logs/plot.log` (2026-11-04: 33 requests, 19 s)                                  |
-
-A first run needs more requests than the 5,000-per-hour limit. In the measured run, GitHub's hourly reset came partway through, so the flow never had to sleep. A run that starts with a full 5,000 budget will use it in about 24 minutes, then sleep until the reset. That makes a first run take up to about 70 minutes.
-
-**Tip: start a full run shortly before your rate limit resets.** GitHub's limit is not reset on the clock hour. It resets one hour after the first request of the current window. A full run that starts shortly before a reset gets a fresh 5,000 requests early, so it has little or no sleep. That is what happened in the measured run: the budget reset about 10 minutes after the start, at 18:08:46 (`logs/extract_full_run.log`), so the run never slept. To check your remaining requests and reset time (this call does not count against the limit):
-
-```bash
-curl -s -H "Authorization: Bearer $GH_PAT" https://api.github.com/rate_limit | grep -A3 '"core"'
-```
-
-`reset` is a Unix timestamp; `date -r <reset>` (macOS) shows it as a local time.
-
-### Outputs
-
-- `packages.duckdb`: raw tables, dbt models, and the `health_scores` ranking
-- `plots/*.png`: three plots
-- `logs/`: one log per task (`extract`, `load`, `transform`, `validate`, `model`, `plot`), plus dbt's own `dbt.log`
-
-## 3. Repository layout
-
-```
-oss-package-health-pipeline/
-├── main.py                        # the Prefect flow and all six tasks
-├── requirements.txt               # pinned dependencies
-│
-├── dbt_project.yml                # dbt project: staging = views, marts = tables
-├── profiles.yml                   # dbt connection: packages.duckdb, UTC (no secrets)
-├── packages.yml                   # dbt package dbt_utils (installed by `dbt deps` in the flow)
-├── package-lock.yml               # pinned dbt package version
-├── models/
-│   ├── staging/
-│   │   ├── sources.yml            # raw_* tables declared as dbt sources
-│   │   ├── schema.yml             # staging tests
-│   │   ├── stg_commits.sql
-│   │   ├── stg_pull_requests.sql
-│   │   ├── stg_pr_reviews.sql
-│   │   └── stg_releases.sql
-│   └── marts/
-│       ├── schema.yml             # descriptions and tests for every mart and column
-│       ├── fct_pull_requests.sql
-│       ├── fct_releases.sql
-│       ├── mart_repo_monthly.sql
-│       └── mart_health_inputs.sql
-│
-├── tests/
-│   ├── assert_pr_closed_after_created.sql   # dbt singular test
-│   ├── assert_review_after_pr_created.sql   # dbt singular test
-│   └── *_test.py, test_fetch_pages.py       # Python tests (section 13)
-│
-├── plots/                         # the three PNGs written by the plot task
-│   ├── dimension_profile.png
-│   ├── monthly_trends.png
-│   └── load_vs_rejection.png
-│
-├── DEPLOYMENTS.md                 # deployment command, settings, and the manual server run's log
-│
-├── docs/
-│   └── course/                    # reference files supplied with the course (not our work)
-│       ├── PROJECT_INSTRUCTIONS.md   # the assignment text (was the template's README.md)
-│       ├── CHECKLIST.md              # submission checklist
-│       ├── ASSESSING-HEALTH.md       # background on measuring open source health
-│       ├── DBT-REFERENCE.md          # dbt layout, profiles, and PrefectDbtRunner reference
-│       ├── DEPLOYMENT-INSTRUCTIONS.md  # Prefect deployment instructions (was the lower half of DEPLOYMENTS.md)
-│       └── EXTRAS.md                 # instructor tips
-│
-└── README.md                      # this write-up
-```
-
-dbt reads `tests/` for singular tests (`test-paths` in `dbt_project.yml`), so the dbt tests and the Python tests share that folder.
-
-**Not committed** (in `.gitignore`), because each is created by running the flow, holds local state, or is not project output:
-
-| Excluded                                | What it is                                                                                    |
-|-----------------------------------------|-----------------------------------------------------------------------------------------------|
-| `data/`                                 | Landed API pages (`data/raw/`) and earlier runs' pages (`data/archive/`)                      |
-| `packages.duckdb`                       | The database                                                                                  |
-| `logs/`                                 | Task logs, `dbt.log`, and test logs (`logs/test_logs/`)                                       |
-| `target/`, `dbt_packages/`              | dbt build output and installed dbt packages                                                   |
-| `.venv/`                                | The virtual environment                                                                       |
-| `images/`                               | Local reference images for plot styling (not project output)                                  |
-| `.env`, `__pycache__/`, `tests/output/` | Secrets, Python caches, test scratch files                                                    |
-
-## 4. Pipeline-wide design
-
-### Retries and error handling
-
-Only extract talks to the network, so it is the only task with retries.
-
-| Failure                                                  | Where                                   | What happens                                                                                                                                                                                                                                                                                                                                                       |
-|----------------------------------------------------------|-----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Any failed request (4xx, 5xx, timeout, connection error) | `github_get`                            | `response.raise_for_status()` raises `httpx.HTTPError`                                                                                                                                                                                                                                                                                                             |
-| Broken JSON in a response                                | `fetch_pages`                           | `response.json()` raises `ValueError`                                                                                                                                                                                                                                                                                                                              |
-| Either of the above                                      | `fetch_pages`                           | Caught, logged with context (`[repo] endpoint page N failed: <error>`), then re-raised                                                                                                                                                                                                                                                                             |
-| Secondary rate limit (403/429 with `Retry-After`)        | `github_get`                            | Sleeps the number of seconds GitHub asks for, then raises, so the retry happens after the wait                                                                                                                                                                                                                                                                     |
-| The re-raised error                                      | `fetch_repo` task, `retry_if_transient` | Transient failures (403/429, 5xx, timeouts, connection errors, broken JSON) are retried up to 3 times, with increasing delays of 10, 30, and 60 s. Pages already on disk are skipped, so a retry costs only the requests that had not succeeded. Permanent failures (other 4xx, such as 404 or 401) fail at once, because they would fail the same way every time. |
-| Ctrl-C                                                   | `extract`, `retry_if_transient`         | Workers stop at their next request or sleep. A Ctrl-C stop is never retried.                                                                                                                                                                                                                                                                                       |
-
-Load through plot work on local files and the database. A failure there (a bad file, a failed dbt test, a validation mismatch) would fail again on a retry, so these tasks have no retries and fail the flow immediately.
-
-### Logging
-
-Each task has its own Python logger with a file handler, and the same logger is routed into Prefect (`PREFECT_LOGGING_EXTRA_LOGGERS`), so every line appears in the terminal, in the Prefect UI, and in a file:
-
-| Task         | Log file                             | What the log records (purpose)                                                                                                                |
-|--------------|--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 Extract    | `logs/extract.log`                   | Every page fetched with its record count and remaining rate-limit budget; rate-limit sleeps; resume points; total API requests per run        |
-| 2 Load       | `logs/load.log`                      | Row count before and after each raw table upsert, which shows loads are idempotent; `_load_state` update and `_LOADED` marker                 |
-| 3 dbt        | `logs/transform.log`, `logs/dbt.log` | `transform.log`: start and finish of `dbt deps` and `dbt build`, with the pass count. `dbt.log`: every model built and every test's PASS/FAIL |
-| 4 Validation | `logs/validate.log`                  | Completeness checks (landed files → raw → staging, commits every month), flagged outliers, descriptive statistics                             |
-| 5 Model      | `logs/model.log`                     | The ranked table (score, rank, 6 subscores) and the equal-weight robustness check                                                             |
-| 6 Plot       | `logs/plot.log`                      | The path of each saved PNG                                                                                                                    |
-
-Python tests write their own logs to `logs/test_logs/` (section 13).
 
 ## 5. Extract
 
@@ -514,129 +466,37 @@ Releases per year count full releases only (prereleases excluded, as in section 
 
 **Note on dask's releases per year.** dask's GitHub Releases start on 2024-04-19; earlier versions were published as git tags only, which the Releases endpoint does not return. Its 44 releases are therefore divided by a period about 3.5 months longer than the one they cover, so 15.5 per year **understates** its rate. Measured from its first GitHub Release it is 17.3 per year. dask has the most releases per year either way. Release regularity (section 9) is not affected, because it uses the gaps between releases, not a rate.
 
-## 9. Health model and ranking
+## 4. Pipeline-wide design
 
-`score_health` reads `mart_health_inputs`, turns each metric into a 0–1 subscore (1 = healthiest), combines the subscores with weights, ranks the repos, writes the table `health_scores`, and logs it to `logs/model.log`.
+### Retries and error handling
 
-### Metrics (6 metrics, 6 dimensions)
+Only extract talks to the network, so it is the only task with retries.
 
-| Dimension                | Metric                   | Definition                                                                                                                                                 | Healthier | dask    | plotly.py | scikit-learn |
-|--------------------------|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|---------|-----------|--------------|
-| Responsiveness           | `pct_reviewed_within_7d` | Share of PRs (created since 2024, at least 7 days old) that got a first non-author, non-bot review within 7 days. Never-reviewed PRs count as not reviewed | higher    | 0.553   | 0.547     | 0.639        |
-| Backlog                  | `pct_open_stale`         | Share of open PRs with no update in more than 180 days                                                                                                     | lower     | 0.211   | 0.151     | 0.341        |
-| Contributor base (trend) | `top_author_share_trend` | Slope per month of the busiest author's share of merged non-bot PRs, over the 34 complete months. A rising share means more dependence on one person       | lower     | +0.0106 | −0.0087   | −0.0001      |
-| Release cadence          | `release_gap_cv`         | Coefficient of variation (std ÷ mean) of days between full releases. Lower = more regular                                                                  | lower     | 0.943   | 0.747     | 0.658        |
-| Activity (trend)         | `commit_trend`           | Slope per month of monthly commits ÷ average monthly commits, over the 34 complete months: change per month as a share of the average                      | higher    | −0.0755 | −0.0065   | −0.0095      |
-| Throughput               | `merge_rate`             | Merged ÷ (merged + closed unmerged), PRs created since 2024                                                                                                | higher    | 0.873   | 0.789     | 0.693        |
+| Failure                                                  | Where                                   | What happens                                                                                                                                                                                                                                                                                                                                                       |
+|----------------------------------------------------------|-----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Any failed request (4xx, 5xx, timeout, connection error) | `github_get`                            | `response.raise_for_status()` raises `httpx.HTTPError`                                                                                                                                                                                                                                                                                                             |
+| Broken JSON in a response                                | `fetch_pages`                           | `response.json()` raises `ValueError`                                                                                                                                                                                                                                                                                                                              |
+| Either of the above                                      | `fetch_pages`                           | Caught, logged with context (`[repo] endpoint page N failed: <error>`), then re-raised                                                                                                                                                                                                                                                                             |
+| Secondary rate limit (403/429 with `Retry-After`)        | `github_get`                            | Sleeps the number of seconds GitHub asks for, then raises, so the retry happens after the wait                                                                                                                                                                                                                                                                     |
+| The re-raised error                                      | `fetch_repo` task, `retry_if_transient` | Transient failures (403/429, 5xx, timeouts, connection errors, broken JSON) are retried up to 3 times, with increasing delays of 10, 30, and 60 s. Pages already on disk are skipped, so a retry costs only the requests that had not succeeded. Permanent failures (other 4xx, such as 404 or 401) fail at once, because they would fail the same way every time. |
+| Ctrl-C                                                   | `extract`, `retry_if_transient`         | Workers stop at their next request or sleep. A Ctrl-C stop is never retried.                                                                                                                                                                                                                                                                                       |
 
-**Size normalization:** every metric is a share, a ratio, or a slope divided by the repo's own average, never a raw count. scikit-learn has 7.6 times as many PRs as plotly, but that alone can't raise its score. The contributor metric uses the top author's *share*, not a bus-factor count, because a count of authors grows with project size.
+Load through plot work on local files and the database. A failure there (a bad file, a failed dbt test, a validation mismatch) would fail again on a retry, so these tasks have no retries and fail the flow immediately.
 
-**Trend component:** two metrics are slopes over the full window: `commit_trend` (is activity growing or shrinking?) and `top_author_share_trend` (is the project becoming more or less dependent on one person?). `top_author_share_trend` was added because it measures fragility without `commit_trend`'s caveats (commits are not all equally meaningful, and AI-assisted coding changes commit habits; [ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)).
+### Logging
 
-### Standardization: fixed-range min-max
+Each task has its own Python logger with a file handler, and the same logger is routed into Prefect (`PREFECT_LOGGING_EXTRA_LOGGERS`), so every line appears in the terminal, in the Prefect UI, and in a file:
 
-Each metric becomes a subscore with `(value − zero_at) ÷ (one_at − zero_at)`, clipped to 0–1. `zero_at` is the value that scores 0 (least healthy), `one_at` the value that scores 1. For lower-is-better metrics `zero_at > one_at`, so the same formula flips the direction (`SCORE_SPECS` in `main.py`).
+| Task         | Log file                             | What the log records (purpose)                                                                                                                |
+|--------------|--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| 1 Extract    | `logs/extract.log`                   | Every page fetched with its record count and remaining rate-limit budget; rate-limit sleeps; resume points; total API requests per run        |
+| 2 Load       | `logs/load.log`                      | Row count before and after each raw table upsert, which shows loads are idempotent; `_load_state` update and `_LOADED` marker                 |
+| 3 dbt        | `logs/transform.log`, `logs/dbt.log` | `transform.log`: start and finish of `dbt deps` and `dbt build`, with the pass count. `dbt.log`: every model built and every test's PASS/FAIL |
+| 4 Validation | `logs/validate.log`                  | Completeness checks (landed files → raw → staging, commits every month), flagged outliers, descriptive statistics                             |
+| 5 Model      | `logs/model.log`                     | The ranked table (score, rank, 6 subscores) and the equal-weight robustness check                                                             |
+| 6 Plot       | `logs/plot.log`                      | The path of each saved PNG                                                                                                                    |
 
-| Metric                   | Scores 0 at     | Scores 1 at     | Actual values (dask / plotly / sklearn) | Subscores (dask / plotly / sklearn) |
-|--------------------------|-----------------|-----------------|-----------------------------------------|-------------------------------------|
-| `pct_reviewed_within_7d` | 0               | 1               | 0.553 / 0.547 / 0.639                   | 0.553 / 0.547 / 0.639               |
-| `pct_open_stale`         | 1               | 0               | 0.211 / 0.151 / 0.341                   | 0.789 / 0.849 / 0.659               |
-| `top_author_share_trend` | +0.02 per month | −0.02 per month | +0.0106 / −0.0087 / −0.0001             | 0.235 / 0.719 / 0.503               |
-| `release_gap_cv`         | 2               | 0               | 0.943 / 0.747 / 0.658                   | 0.529 / 0.626 / 0.671               |
-| `commit_trend`           | −0.10 per month | +0.10 per month | −0.0755 / −0.0065 / −0.0095             | 0.123 / 0.467 / 0.453               |
-| `merge_rate`             | 0               | 1               | 0.873 / 0.789 / 0.693                   | 0.873 / 0.789 / 0.693               |
-
-- Shares use their natural 0–1 range (stale share flipped).
-- The other three ranges are my choice: wide enough that every repo falls inside them (no value is clipped), so each repo keeps its real distance from the others. dask's commit trend (−0.0755) is the closest to an end of its range.
-
-**Why fixed ranges instead of the usual min-max across the three repos:** ordinary min-max always gives the best repo 1 and the worst 0 on every metric, however close they are. dask's 55.3% and plotly's 54.7% review rates would become 1.00 and 0.00, a large gap from a 0.6-point difference. Z-scores spread three repos the same way, and ranks keep only the order. Fixed ranges keep close repos close, and a repo's score doesn't change if the repo set changes. Plain min-max is the usual choice; the fixed ranges are my design. The ranking is the same under all three methods.
-
-### Weights
-
-Weights sum to 100, in three tiers ranked by how directly each metric measures health and how strong its caveats are. Within a tier, the two metrics were judged equally direct, so they get equal weight.
-
-| Tier | Dimension        | Weight | Why                                                                                                                                                                                                                     |
-|------|------------------|--------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1    | Responsiveness   | 25     | Most direct sign that maintainers keep up with incoming work                                                                                                                                                            |
-| 1    | Backlog          | 25     | Same, from the other end: work nobody returns to                                                                                                                                                                        |
-| 2    | Contributor base | 15     | Important idea (dependence on one person), weaker metric: it measures change, not level, and the slopes are small                                                                                                       |
-| 2    | Release cadence  | 15     | Regular is not always better; scikit-learn has only 15 release gaps to measure                                                                                                                                          |
-| 3    | Activity         | 10     | Commit counts move for reasons other than health (commit habits, AI-assisted coding); the straight-line fit is weak for plotly and scikit-learn (R² 0.01 and 0.11)                                                      |
-| 3    | Throughput       | 10     | Direction holds only up to a point: a higher merge rate means contributions get accepted, but a very high one can mean weak review, and a lower one can mean healthy strictness (scikit-learn rejects many outside PRs) |
-
-### Ranking (`health_scores`, `logs/model.log`)
-
-| Rank | Repo         | Score     | Responsiveness | Backlog | Contributors | Release cadence | Activity | Throughput |
-|------|--------------|-----------|----------------|---------|--------------|-----------------|----------|------------|
-| 1    | plotly.py    | **0.676** | 0.547          | 0.849   | 0.719        | 0.626           | 0.467    | 0.789      |
-| 2    | scikit-learn | **0.615** | 0.639          | 0.659   | 0.503        | 0.671           | 0.453    | 0.693      |
-| 3    | dask         | **0.550** | 0.553          | 0.789   | 0.235        | 0.529           | 0.123    | 0.873      |
-|      | weight       |           | 25             | 25      | 15           | 15              | 10       | 10         |
-
-### Robustness check
-
-The flow also logs the ranking with equal weights (1/6 each; logged only, not stored): plotly 0.666, scikit-learn 0.603, dask 0.517. The order is the same.
-
-This doesn't prove the weights are correct; weights are a judgment. It shows the ranking doesn't depend on them. plotly beats scikit-learn on 4 of 6 dimensions (backlog, contributors, activity, throughput), so the order only flips under extreme weights, such as putting about half the total on responsiveness. Our weights mainly reduce the influence of noisy metrics like commit trend. That narrows dask's gap (its weakest dimensions are activity and contributors) but doesn't change its rank.
-
-## 10. Plots
-
-`plot_health` saves three PNGs to `plots/`. Every plot uses the same color per repo (plotly green, scikit-learn blue, dask orange) and lists the repos in rank order.
-
-### Plot 1: Dimension profile
-
-![Health subscores by dimension](plots/dimension_profile.png)
-
-**Dimension profile.** Each group of bars is one scored dimension labeled with its weight, the bars within each group follow the final rank, and the legend gives each repo's rank and score. No repo leads every dimension. plotly ranks first because it has no weak spot. It has the smallest stale backlog (15% of its open PRs untouched for 180+ days, a backlog subscore of 0.85), the best contributor score (0.72), and it is second on throughput and narrowly first on activity. scikit-learn leads responsiveness (0.64) and release cadence (0.67), but 34% of its open PRs are stale. That is the largest stale backlog of the three, so it gets the lowest backlog subscore (0.66) on a dimension worth 25%. dask has the highest throughput (0.87) and a fairly small stale backlog (21%, subscore 0.79), but the lowest contributor (0.24) and activity (0.12) scores. Those two low scores match its merge slowdown since July 2026 and a growing share of merged PRs from its busiest author.
-
-### Plot 2: Monthly trends
-
-![Monthly metrics per repo](plots/monthly_trends.png)
-
-**Monthly trends.** Each column is one repo in rank order. Each row is a monthly measure from `mart_repo_monthly` that relates to one scored dimension, named in the panel subtitle, and the rows are ordered by that dimension's weight tier. These are not the scored metrics themselves, which are single values per repo in `mart_health_inputs`. The colored line is a 3-month rolling mean, the dots are the raw months, and the gray lines are the other two repos.
-
-- **Median first-review time.** scikit-learn stays steady at about 11 to 16 hours. plotly and dask rise together in 2026 (plotly from 6.7 hours in 2025 to 27, dask from 10.5 to 61). A longer wait for a first review means contributors hear back more slowly, a sign that maintainers are falling behind the incoming work. Both repos received more PRs in 2026, most from people new to the project, so a larger review load is a likely cause.
-- **Active PR authors.** plotly and dask have small groups of authors (about 6 to 12 a month) that stay level until a rise in mid to late 2026. scikit-learn has far more and keeps growing, from 51 a month in 2024 to 84 in 2026. A small, steady group can run a healthy project if it keeps up with its work. scikit-learn's growth is mostly first-time contributors (595 of its 655 PR authors in 2026 opened their first PR in our data that year), and its merge ratio fell from 0.83 in 2024 to 0.55 in 2026. The extra authors mostly bring more PRs for maintainers to review and turn down, not more maintainers. dask shows the same pattern on a smaller scale, with 157 first-time authors among its 166 in 2026. A late rise in new authors across all three repos may partly reflect AI-assisted contributions, which [ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md) warns about.
-- **Top author's share.** scikit-learn stays near 0.18, so no single person dominates its merges. plotly fell from 0.62 in 2024 to about 0.44, becoming less dependent on one person. dask rose from 0.46 to 0.72 and reaches 1.0 in August and September 2026, but those months had one merge each, so the 1.0 reflects a single PR rather than one person taking over.
-- **Commits.** plotly moves in waves. Its biggest burst (245 and 253 commits in October and November 2024) came just before version 6.0.0 in January 2025, and commits rose again around version 7.0.0 in August 2026, which fits work being pushed ahead of major releases. scikit-learn is steady at about 100 a month with a slower 2026. dask started very high (237 commits in January 2024, 137 of them by one developer) and then fell to near zero. dask is not a new project settling down (its PR numbers were already above 10,000 in 2024), and its active authors went up while its commits went down. Together that points to a project that still receives contributions but is no longer merging them.
-- **PRs opened and merged.** scikit-learn opens about 1,700 PRs a year and merges about 1,200, with a slower 2026 (889 merges in ten months). plotly opens a few more PRs each year and merges a steady 150 to 175. dask's two rows split apart in 2026, with PRs opened rising while merges fell to zero by October.
-
-### Plot 3: Load vs. rejection
-
-![Load vs rejection](plots/load_vs_rejection.png)
-
-**Load vs. rejection.** Each repo's complete months are grouped by how many PRs were opened compared with that repo's own monthly average: quiet (under 0.8×), normal (0.8–1.2×), and busy (over 1.2×). Each bubble's height is the average merge ratio for that group, its size is the average number of active PR authors, and its label gives the merge ratio, authors, and number of months. Measuring load against each repo's own average keeps scikit-learn's size from dominating.
-
-- **plotly handles changes in load best, which fits its first-place rank.** Its merge ratio is the same 0.84 in quiet and normal months, and its author count barely changes between them (6 and 8), so ordinary swings in incoming work don't change how it treats PRs. Only its busy months, with about twice as many authors (13), bring the ratio down to 0.74. dask and scikit-learn instead lose merge ratio at every step up in load while their authors climb steadily (dask 9, 12, 16; scikit-learn 50, 63, 85). plotly's busy months are also spread across all three years, so its pattern reflects load rather than one unusual period.
-- **All three repos merge a smaller share of PRs in their busiest months, and busier months bring more authors.** scikit-learn drops the most, from 0.79 in quiet months to 0.62 in busy ones.
-- **For scikit-learn the drop is mostly a change over time, not a reaction to load.** Five of its seven busy months are in 2026, all seven quiet months are in 2024 and 2025, and its overall merge ratio fell from 0.83 in 2024 to 0.55 in 2026. Within any single year its load and merge ratio barely move together (correlation between −0.14 and +0.03). The plot is consistent with the first-time contributors seen in plot 2, whose PRs scikit-learn merges less often, but it cannot show that a busy month by itself causes more rejections.
-- **For plotly and dask the pattern is weaker and mixed.** Their per-month correlations are −0.32 and −0.08, and within single years they change direction. The bins average away a lot of month-to-month spread, so the lines look cleaner than the monthly data is.
-- **What it means for the score.** A lower merge ratio in scikit-learn's busy recent months reflects a flood of outside PRs it declines, not necessarily weaker maintenance. This is why merge rate carries only 10% of the score (section 9).
-
-## 11. Data findings and limitations
-
-### What the data shows about each repo
-
-- **dask's merging slowed sharply from July 2026.** It merged 10 PRs in July, 1 each in August and September, and none in October, against an average of 30.5 a month in 2024–25. It has not merged a PR since 2026-09-29 (36 days at the last run). That does not prove it stopped: the gap before that one was 43 days, and maintainers still close PRs (10 since 2026-09-29) and review them (1 approval). Before July 2026 no gap between merges was longer than 21 days.
-- **scikit-learn draws a large and growing number of first-time contributors** (595 of its 655 PR authors in 2026 opened their first PR in our data that year), and it merges a falling share of PRs (merge ratio 0.83 in 2024, 0.71 in 2025, 0.55 in 2026). Its low merge rate reflects outside PRs it declines, which is why merge rate has a low weight.
-- **plotly has the smallest stale backlog** (14 of 93 open PRs), but 21 of its 45 Dependabot PRs are still open. Five PRs by one author were merged after 409–492 days, likely a batch of old work merged together.
-- **Bots wrote few commits** (dask 3.9%, scikit-learn 0.6%, plotly 0.2%), so the bot rule changes little for commit counts.
-
-### Data quirks handled in the pipeline
-
-- **dask's GitHub Releases start on 2024-04-19.** Earlier versions were git tags only, which the Releases endpoint does not return. Its releases per year (15.5) understates its rate (17.3 measured from its first release). Release regularity is not affected.
-- **plotly has 4 prereleases in the window.** They are kept in the data but left out of release regularity and releases per year (section 7).
-- **7 plotly commits have author dates before 2024** (commits fetched by commit date can carry an older author date). They are in `stg_commits` but fall outside the monthly marts.
-- **23 commits have no linked GitHub account.** They count as non-bot (section 7).
-
-### Limitations
-
-- **Medians cover only finished steps.** Review and merge medians skip PRs still waiting, so they can look faster than the real experience of an open PR. The stale-backlog and reviewed-within-7-days shares cover the waiting PRs instead.
-- **"First-time" contributors means first seen in our data.** PR data starts with PRs updated since 2024, so someone whose earlier PRs were all older counts as new.
-- **Commit counts are an imperfect activity measure.** Commit habits differ between projects, and AI-assisted coding can raise commit and PR counts without more real work ([ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)). That is why commit trend has the lowest weight.
-- **The fixed scoring ranges and the weights are judgment calls.** The equal-weight check shows the ranking does not depend on the weights (section 9), but different ranges would change the subscores.
-- **The ranking is a snapshot.** The window grows with every run, so scores move as new months arrive, especially for dask while its merging is slow.
-- **Plot 3 cannot separate load from time.** scikit-learn's busy months are mostly in 2026, when its merge ratio fell for other reasons (section 10).
+Python tests write their own logs to `logs/test_logs/` (section 13).
 
 ## 12. Additional features
 
@@ -682,6 +542,146 @@ for t in tests/*_test.py tests/test_fetch_pages.py; do printf "%-32s" "$t"; pyth
 ```
 
 Last runs (2026-11-04): all 12 passed. A test run outside a flow prints a harmless Prefect warning, `Logger ... attempted to send logs to the API without a flow run id`.
+
+### Data quirks handled in the pipeline
+
+- **dask's GitHub Releases start on 2024-04-19.** Earlier versions were git tags only, which the Releases endpoint does not return. Its releases per year (15.5) understates its rate (17.3 measured from its first release). Release regularity is not affected.
+- **plotly has 4 prereleases in the window.** They are kept in the data but left out of release regularity and releases per year (section 7).
+- **7 plotly commits have author dates before 2024** (commits fetched by commit date can carry an older author date). They are in `stg_commits` but fall outside the monthly marts.
+- **23 commits have no linked GitHub account.** They count as non-bot (section 7).
+
+### Limitations
+
+- **Medians cover only finished steps.** Review and merge medians skip PRs still waiting, so they can look faster than the real experience of an open PR. The stale-backlog and reviewed-within-7-days shares cover the waiting PRs instead.
+- **"First-time" contributors means first seen in our data.** PR data starts with PRs updated since 2024, so someone whose earlier PRs were all older counts as new.
+- **Commit counts are an imperfect activity measure.** Commit habits differ between projects, and AI-assisted coding can raise commit and PR counts without more real work ([ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)). That is why commit trend has the lowest weight.
+- **The fixed scoring ranges and the weights are judgment calls.** The equal-weight check shows the ranking does not depend on the weights (section 9), but different ranges would change the subscores.
+- **The ranking is a snapshot.** The window grows with every run, so scores move as new months arrive, especially for dask while its merging is slow.
+- **Plot 3 cannot separate load from time.** scikit-learn's busy months are mostly in 2026, when its merge ratio fell for other reasons (section 10).
+
+## 2. Setup and run
+
+### Requirements
+
+- Python 3.12
+- A GitHub personal access token. A classic token with no scopes is enough, because all three repos are public.
+- All Python dependencies are pinned in `requirements.txt` (dbt-core 1.12.6, dbt-duckdb 1.11.1, duckdb 2.0.0, httpx 0.28.1, prefect 3.9.0, prefect-dbt 0.7.25).
+
+### Setup
+
+```bash
+git clone https://github.com/MaxGuryan9/oss-package-health-pipeline.git
+cd oss-package-health-pipeline
+uv venv .venv --python 3.12        # or: python3.12 -m venv .venv
+source .venv/bin/activate
+uv pip install -r requirements.txt  # or: pip install -r requirements.txt
+export GH_PAT=<your token>
+```
+
+The token is read from the `GH_PAT` environment variable. When that variable is not set, as on the Prefect server during a deployment run, it is loaded from the Prefect Secret block `rhk2dx-pat` instead (`TOKEN` in `main.py`). The token is never written to a file in the repo, and `.gitignore` excludes `.env` files.
+
+Nothing else needs to be set up: the flow runs `dbt deps` itself, and it creates `data/`, `logs/`, and `packages.duckdb` on the first run.
+
+### Run
+
+```bash
+python main.py
+```
+
+This runs one Prefect flow, `rhk2dx-package-health-flow`: extract → load → dbt build → validate → score → plot.
+
+To publish the monthly scheduled deployment instead (see section 12 and `DEPLOYMENTS.md`):
+
+```bash
+python main.py --deploy
+```
+
+### Expected runtime
+
+| Run                                      | API requests | Time                                                                           | Source                                                                                                |
+|------------------------------------------|--------------|--------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| First run (full window, nothing on disk) | 7,034        | Extract about 35 min; load, dbt, validation, scoring, and plots add under 15 s | `logs/extract_full_run.log` (2026-11-01, 17:59 → 18:35, including a 3-minute deliberate interruption) |
+| Later runs (incremental)                 | 13–61        | About 20 s for the whole flow                                                  | `logs/extract.log` → `logs/plot.log` (2026-11-04: 33 requests, 19 s)                                  |
+
+A first run needs more requests than the 5,000-per-hour limit. In the measured run, GitHub's hourly reset came partway through, so the flow never had to sleep. A run that starts with a full 5,000 budget will use it in about 24 minutes, then sleep until the reset. That makes a first run take up to about 70 minutes.
+
+**Tip: start a full run shortly before your rate limit resets.** GitHub's limit is not reset on the clock hour. It resets one hour after the first request of the current window. A full run that starts shortly before a reset gets a fresh 5,000 requests early, so it has little or no sleep. That is what happened in the measured run: the budget reset about 10 minutes after the start, at 18:08:46 (`logs/extract_full_run.log`), so the run never slept. To check your remaining requests and reset time (this call does not count against the limit):
+
+```bash
+curl -s -H "Authorization: Bearer $GH_PAT" https://api.github.com/rate_limit | grep -A3 '"core"'
+```
+
+`reset` is a Unix timestamp; `date -r <reset>` (macOS) shows it as a local time.
+
+### Outputs
+
+- `packages.duckdb`: raw tables, dbt models, and the `health_scores` ranking
+- `plots/*.png`: three plots
+- `logs/`: one log per task (`extract`, `load`, `transform`, `validate`, `model`, `plot`), plus dbt's own `dbt.log`
+
+## 3. Repository layout
+
+```
+oss-package-health-pipeline/
+├── main.py                        # the Prefect flow and all six tasks
+├── requirements.txt               # pinned dependencies
+│
+├── dbt_project.yml                # dbt project: staging = views, marts = tables
+├── profiles.yml                   # dbt connection: packages.duckdb, UTC (no secrets)
+├── packages.yml                   # dbt package dbt_utils (installed by `dbt deps` in the flow)
+├── package-lock.yml               # pinned dbt package version
+├── models/
+│   ├── staging/
+│   │   ├── sources.yml            # raw_* tables declared as dbt sources
+│   │   ├── schema.yml             # staging tests
+│   │   ├── stg_commits.sql
+│   │   ├── stg_pull_requests.sql
+│   │   ├── stg_pr_reviews.sql
+│   │   └── stg_releases.sql
+│   └── marts/
+│       ├── schema.yml             # descriptions and tests for every mart and column
+│       ├── fct_pull_requests.sql
+│       ├── fct_releases.sql
+│       ├── mart_repo_monthly.sql
+│       └── mart_health_inputs.sql
+│
+├── tests/
+│   ├── assert_pr_closed_after_created.sql   # dbt singular test
+│   ├── assert_review_after_pr_created.sql   # dbt singular test
+│   └── *_test.py, test_fetch_pages.py       # Python tests (section 13)
+│
+├── plots/                         # the three PNGs written by the plot task
+│   ├── dimension_profile.png
+│   ├── monthly_trends.png
+│   └── load_vs_rejection.png
+│
+├── DEPLOYMENTS.md                 # deployment command, settings, and the manual server run's log
+│
+├── docs/
+│   └── course/                    # reference files supplied with the course (not our work)
+│       ├── PROJECT_INSTRUCTIONS.md   # the assignment text (was the template's README.md)
+│       ├── CHECKLIST.md              # submission checklist
+│       ├── ASSESSING-HEALTH.md       # background on measuring open source health
+│       ├── DBT-REFERENCE.md          # dbt layout, profiles, and PrefectDbtRunner reference
+│       ├── DEPLOYMENT-INSTRUCTIONS.md  # Prefect deployment instructions (was the lower half of DEPLOYMENTS.md)
+│       └── EXTRAS.md                 # instructor tips
+│
+└── README.md                      # this write-up
+```
+
+dbt reads `tests/` for singular tests (`test-paths` in `dbt_project.yml`), so the dbt tests and the Python tests share that folder.
+
+**Not committed** (in `.gitignore`), because each is created by running the flow, holds local state, or is not project output:
+
+| Excluded                                | What it is                                                                                    |
+|-----------------------------------------|-----------------------------------------------------------------------------------------------|
+| `data/`                                 | Landed API pages (`data/raw/`) and earlier runs' pages (`data/archive/`)                      |
+| `packages.duckdb`                       | The database                                                                                  |
+| `logs/`                                 | Task logs, `dbt.log`, and test logs (`logs/test_logs/`)                                       |
+| `target/`, `dbt_packages/`              | dbt build output and installed dbt packages                                                   |
+| `.venv/`                                | The virtual environment                                                                       |
+| `images/`                               | Local reference images for plot styling (not project output)                                  |
+| `.env`, `__pycache__/`, `tests/output/` | Secrets, Python caches, test scratch files                                                    |
 
 ## 14. Background
 
