@@ -9,18 +9,14 @@ monthly schedule as a Prefect deployment on Kubernetes.
 
 **Stack:** Python 3.12 · Prefect 3 · DuckDB · dbt (dbt-duckdb) · GitHub REST API · matplotlib
 
-**Highlights**
-- Incremental, resumable extraction: rate-limit aware, concurrent per repo, never re-downloads a landed page
-- Idempotent upserts into DuckDB with load watermarks
-- 8 dbt models and 43 tests (staging, facts, marts); `dbt build` runs inside the flow
-- Python validation from landed JSON to staging, plus outlier detection
-- Weighted health score with fixed-range standardization and an equal-weight robustness check
-
-![Health dimension profile](plots/dimension_profile.png)
-
 > **Data snapshot:** the numbers and plots in this README come from the run on
 > 2026-11-04 and do not include data after that date. The scheduled deployment
 > keeps running monthly, but this write-up is not updated automatically.
+
+**Contents**
+- **Results:** [Ranking and findings](#results) · [Plots](#plots) · [How the score works](#how-the-score-works)
+- **How it was built:** [Pipeline overview](#pipeline-overview) · [Extract](#extract) · [Load](#load) · [Transform](#transform-dbt) · [Validation](#validation) · [Pipeline-wide design](#pipeline-wide-design) · [Additional features](#additional-features) · [Tests](#tests)
+- **Reference:** [Data quirks and limitations](#data-quirks-and-limitations) · [Setup and run](#setup-and-run) · [Repository layout](#repository-layout) · [Background](#background)
 
 ## Results
 
@@ -162,6 +158,13 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 | 4   | `validate`          | Python checks from landed files to staging; outliers; descriptive statistics         | log only (fails the flow on a mismatch)              |
 | 5   | `score_health`      | Scores 6 health dimensions from `mart_health_inputs`, weights them, ranks the repos  | `health_scores` table                                |
 | 6   | `plot_health`       | Draws 3 plots                                                                        | `plots/*.png`                                        |
+
+**Highlights**
+- Incremental, resumable extraction: rate-limit aware, concurrent per repo, never re-downloads a landed page
+- Idempotent upserts into DuckDB with load watermarks
+- 8 dbt models and 43 tests (staging, facts, marts); `dbt build` runs inside the flow
+- Python validation from landed JSON to staging, plus outlier detection
+- Weighted health score with fixed-range standardization and an equal-weight robustness check
 
 ## Extract
 
