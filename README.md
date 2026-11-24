@@ -549,7 +549,7 @@ Each metric becomes a subscore with `(value − zero_at) ÷ (one_at − zero_at)
 - Shares use their natural 0–1 range (stale share flipped).
 - The other three ranges are my choice: wide enough that every repo falls inside them (no value is clipped), so each repo keeps its real distance from the others. dask's commit trend (−0.0755) is the closest to an end of its range.
 
-**Why fixed ranges instead of the usual min-max across the three repos:** ordinary min-max always gives the best repo 1 and the worst 0 on every metric, however close they are. dask's 55.3% and plotly's 54.7% review rates would become 1.00 and 0.00, a large gap from a 0.6-point difference. Z-scores spread three repos the same way, and ranks keep only the order. Fixed ranges keep close repos close, and a repo's score doesn't change if the repo set changes. The assignment only says "min-max"; the fixed ranges are my design. The ranking is the same under all three methods.
+**Why fixed ranges instead of the usual min-max across the three repos:** ordinary min-max always gives the best repo 1 and the worst 0 on every metric, however close they are. dask's 55.3% and plotly's 54.7% review rates would become 1.00 and 0.00, a large gap from a 0.6-point difference. Z-scores spread three repos the same way, and ranks keep only the order. Fixed ranges keep close repos close, and a repo's score doesn't change if the repo set changes. Plain min-max is the usual choice; the fixed ranges are my design. The ranking is the same under all three methods.
 
 ### Weights
 
