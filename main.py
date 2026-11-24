@@ -62,7 +62,7 @@ LOAD_SPECS = {
     },
 }
 
-# Validate: thresholds for outlier detection (README section 8). Different author types get different cutoffs,
+# Validate: thresholds for outlier detection (README "Validation"). Different author types get different cutoffs,
 # because a wait that is normal for a human PR means an automated PR got stuck.
 HUMAN_MERGE_QUANTILE = 0.99  # human PRs: slower than 99% of that repo's merged human PRs; 0.99 (not 0.90) so every flag is far outside the trend
 BOT_MERGE_HOURS = 7 * 24     # bot PRs: automated updates normally merge within hours, so a week means stuck
@@ -304,7 +304,7 @@ def fetch_reviews(
     created_since: str = WINDOW_START,
     out_dir: Path | None = None,
 ) -> tuple[list[dict], int]:
-    """One reviews call per PR created in the window, merged or not (README section 5). Returns (reviews, requests)."""
+    """One reviews call per PR created in the window, merged or not (README "Extract"). Returns (reviews, requests)."""
     out_dir = out_dir or landing_dir(repo, "reviews")
     # Dict by number drops PRs listed twice (a resumed pulls fetch can repeat one at a page boundary).
     in_window = {pr["number"]: pr for pr in prs if pr["created_at"] >= created_since}
@@ -374,7 +374,7 @@ def fetch_repo(repo: str, commits_since: str, pulls_since: str, window_start: st
     """All four endpoints for one repo: pulls, then their reviews, then commits and releases. Returns requests made."""
     logger.info(f"[{repo}] commits since {commits_since}, pulls updated since {pulls_since}")
     prs, n_pulls = fetch_pages(repo, "pulls", PULLS_PARAMS, stop_before=pulls_since)
-    # review calls only for PRs updated since the watermark (README section 6, incremental loads)
+    # review calls only for PRs updated since the watermark (README "Load", incremental loads)
     updated = [pr for pr in prs if pr["updated_at"] >= pulls_since]
     reviews, n_reviews = fetch_reviews(repo, updated, created_since=window_start)
     commits, n_commits = fetch_pages(repo, "commits", {"since": commits_since})
@@ -453,7 +453,7 @@ def extract(window_start: str = WINDOW_START) -> int:
     mode = prepare_raw_dir()
     watermarks = read_watermarks()
     logger.info(f"Extract starting ({mode}): {len(REPOS)} repos, window from {window_start}")
-    # incremental: fetch commits and pulls only since the newest ones already loaded (README section 6)
+    # incremental: fetch commits and pulls only since the newest ones already loaded (README "Load")
     commits_since = [watermarks.get((r, "commits"), window_start) for r in REPOS]
     pulls_since = [watermarks.get((r, "pulls"), window_start) for r in REPOS]
     try:

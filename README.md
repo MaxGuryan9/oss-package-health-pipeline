@@ -22,7 +22,7 @@ monthly schedule as a Prefect deployment on Kubernetes.
 > 2026-11-04 and do not include data after that date. The scheduled deployment
 > keeps running monthly, but this write-up is not updated automatically.
 
-## 1. Overview
+## Results
 
 The flow ranks three Python data science packages from healthiest to least healthy development community.
 
@@ -34,7 +34,7 @@ The flow ranks three Python data science packages from healthiest to least healt
 
 Analysis window: 2024-01-01 through the time of each run (35 months, January 2024 to November 2026, as of the last run).
 
-### Result
+### Ranking
 
 | Rank | Repo                        | Health score (0–1) |
 |------|-----------------------------|--------------------|
@@ -42,9 +42,7 @@ Analysis window: 2024-01-01 through the time of each run (35 months, January 202
 | 2    | `scikit-learn/scikit-learn` | 0.615              |
 | 3    | `dask/dask`                 | 0.550              |
 
-With equal weights the order is the same (0.666 / 0.603 / 0.517). Section 9 explains the metrics and weights. Section 11 covers dask's rank: its merging slowed sharply from July 2026 (1 merge each in August and September, against an average of 30.5 per month in 2024–25), and it has not merged a PR since 2026-09-29, though maintainers still review and close PRs.
-
-## 11. Data findings and limitations
+With equal weights the order is the same (0.666 / 0.603 / 0.517). [How the score works](#how-the-score-works) explains the metrics and weights. [What the data shows](#what-the-data-shows-about-each-repo) covers dask's rank: its merging slowed sharply from July 2026 (1 merge each in August and September, against an average of 30.5 per month in 2024–25), and it has not merged a PR since 2026-09-29, though maintainers still review and close PRs.
 
 ### What the data shows about each repo
 
@@ -53,7 +51,7 @@ With equal weights the order is the same (0.666 / 0.603 / 0.517). Section 9 expl
 - **plotly has the smallest stale backlog** (14 of 93 open PRs), but 21 of its 45 Dependabot PRs are still open. Five PRs by one author were merged after 409–492 days, likely a batch of old work merged together.
 - **Bots wrote few commits** (dask 3.9%, scikit-learn 0.6%, plotly 0.2%), so the bot rule changes little for commit counts.
 
-## 10. Plots
+## Plots
 
 `plot_health` saves three PNGs to `plots/`. Every plot uses the same color per repo (plotly green, scikit-learn blue, dask orange) and lists the repos in rank order.
 
@@ -85,9 +83,9 @@ With equal weights the order is the same (0.666 / 0.603 / 0.517). Section 9 expl
 - **All three repos merge a smaller share of PRs in their busiest months, and busier months bring more authors.** scikit-learn drops the most, from 0.79 in quiet months to 0.62 in busy ones.
 - **For scikit-learn the drop is mostly a change over time, not a reaction to load.** Five of its seven busy months are in 2026, all seven quiet months are in 2024 and 2025, and its overall merge ratio fell from 0.83 in 2024 to 0.55 in 2026. Within any single year its load and merge ratio barely move together (correlation between −0.14 and +0.03). The plot is consistent with the first-time contributors seen in plot 2, whose PRs scikit-learn merges less often, but it cannot show that a busy month by itself causes more rejections.
 - **For plotly and dask the pattern is weaker and mixed.** Their per-month correlations are −0.32 and −0.08, and within single years they change direction. The bins average away a lot of month-to-month spread, so the lines look cleaner than the monthly data is.
-- **What it means for the score.** A lower merge ratio in scikit-learn's busy recent months reflects a flood of outside PRs it declines, not necessarily weaker maintenance. This is why merge rate carries only 10% of the score (section 9).
+- **What it means for the score.** A lower merge ratio in scikit-learn's busy recent months reflects a flood of outside PRs it declines, not necessarily weaker maintenance. This is why merge rate carries only 10% of the score ([How the score works](#how-the-score-works)).
 
-## 9. Health model and ranking
+## How the score works
 
 `score_health` reads `mart_health_inputs`, turns each metric into a 0–1 subscore (1 = healthiest), combines the subscores with weights, ranks the repos, writes the table `health_scores`, and logs it to `logs/model.log`.
 
@@ -152,7 +150,7 @@ The flow also logs the ranking with equal weights (1/6 each; logged only, not st
 
 This doesn't prove the weights are correct; weights are a judgment. It shows the ranking doesn't depend on them. plotly beats scikit-learn on 4 of 6 dimensions (backlog, contributors, activity, throughput), so the order only flips under extreme weights, such as putting about half the total on responsiveness. Our weights mainly reduce the influence of noisy metrics like commit trend. That narrows dask's gap (its weakest dimensions are activity and contributors) but doesn't change its rank.
 
-### The flow
+## Pipeline overview
 
 `rhk2dx-package-health-flow` in `main.py` runs six tasks in order:
 
@@ -165,7 +163,7 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 | 5   | `score_health`      | Scores 6 health dimensions from `mart_health_inputs`, weights them, ranks the repos  | `health_scores` table                                |
 | 6   | `plot_health`       | Draws 3 plots                                                                        | `plots/*.png`                                        |
 
-## 5. Extract
+## Extract
 
 ### Endpoints and record counts (first full run, 2026-11-01)
 
@@ -185,8 +183,8 @@ Total: 7,034 API requests. Every count above is logged per repo and endpoint in 
 ### Rate limits
 
 - **Primary limit:** `github_get` reads `X-RateLimit-Remaining` and `X-RateLimit-Reset` on every response. When 25 or fewer requests remain, it sleeps until the reset time plus 5 s. The 25-request buffer leaves room for the other two threads' requests that are already in flight.
-- **Secondary limit:** a 403/429 with `Retry-After` sleeps that many seconds, then raises so Prefect retries (section 4).
-- 5xx errors and timeouts are retried by Prefect (section 4).
+- **Secondary limit:** a 403/429 with `Retry-After` sleeps that many seconds, then raises so Prefect retries ([Pipeline-wide design](#pipeline-wide-design)).
+- 5xx errors and timeouts are retried by Prefect ([Pipeline-wide design](#pipeline-wide-design)).
 
 ### Concurrent fetching
 
@@ -223,9 +221,9 @@ The budget went from 4,437 before the stop to 4,430 after the restart, so the pa
 
 > **Note on the missing Ctrl-C line.** The warning `Ctrl-C received: stopping workers; pages on disk are kept for resume` was added to `extract` after this full run, so it does not appear in the excerpt above. It is confirmed by `tests/interrupt_test.py`, which sends a real Ctrl-C to a running extract (`logs/test_logs/interrupt_test.log`: the warning is logged and the workers stop 0.7 s later). The full run was not repeated to capture the line: the gap was found too close to the deadline, and a fresh full run costs about 7,000 requests and up to 70 minutes.
 
-When `_LOADED` exists, everything on disk is already in DuckDB. The run moves `data/raw/` to `data/archive/raw_<UTC time>/` (kept for validation, instead of deleted) and fetches only records newer than the `_load_state` watermarks (section 6).
+When `_LOADED` exists, everything on disk is already in DuckDB. The run moves `data/raw/` to `data/archive/raw_<UTC time>/` (kept for validation, instead of deleted) and fetches only records newer than the `_load_state` watermarks ([Load](#load)).
 
-## 6. Load
+## Load
 
 ### Raw tables
 
@@ -284,7 +282,7 @@ Request counts are from `Extract finished: N API requests this run` in `logs/ext
 
 > Run 4 completed extract, load, and dbt, then failed when validation opened the database read-only. dbt keeps a read-write connection open in the same process, and DuckDB refuses a second connection with different settings. Validation now connects with default settings; run 5 passed 4 minutes later.
 
-## 7. Transform (dbt)
+## Transform (dbt)
 
 `dbt build` runs inside the flow (`dbt_build`, using `PrefectDbtRunner` as in [DBT-REFERENCE.md](docs/course/DBT-REFERENCE.md)). It runs `dbt deps`, then builds every model and runs every test, and raises if any model or test fails. This is the only task that runs dbt. Staging models are views; marts are tables, so the tests read stored results (`dbt_project.yml`). Last run: `PASS=51 ERROR=0` (8 models, 43 tests) in about 4 s.
 
@@ -319,7 +317,7 @@ Request counts are from `Extract finished: N API requests this run` in `logs/ext
 - `month_index` (0 = January 2024): the x-axis for the trend slopes.
 - `top_author_share`: the share of the month's merged non-bot PRs written by the busiest author. It is NULL when a month has no merges, so an empty month doesn't look perfectly spread out.
 
-**`mart_health_inputs`**: one row per repo, one column per health-score metric (section 9). Every column is a share, ratio, or slope, never a raw count. Validation, scoring, and plotting read durations and rates from these marts; no Python code recomputes them.
+**`mart_health_inputs`**: one row per repo, one column per health-score metric ([How the score works](#how-the-score-works)). Every column is a share, ratio, or slope, never a raw count. Validation, scoring, and plotting read durations and rates from these marts; no Python code recomputes them.
 
 ### How medians treat open PRs
 
@@ -347,7 +345,7 @@ Results print to the terminal during the run and are saved in `logs/dbt.log`, fo
 
 `schema.yml` in each folder describes every model and column; the raw tables are declared as dbt sources in `models/staging/sources.yml`.
 
-## 8. Validation
+## Validation
 
 `validate` is a Python task (no dbt) that runs after dbt. It runs every check, logs the results, and raises once at the end if any completeness check failed, so one run lists every problem. Numbers below are from the last flow run (2026-11-04 13:33, `logs/validate.log`).
 
@@ -454,7 +452,7 @@ Notable: the 5 plotly PRs are all by one author and took 409–492 days, likely 
 
 ### Descriptive statistics
 
-Read from `fct_pull_requests`, `mart_repo_monthly`, and `fct_releases`; no durations are recomputed. Medians and percentiles skip PRs that were never reviewed or never merged (section 7).
+Read from `fct_pull_requests`, `mart_repo_monthly`, and `fct_releases`; no durations are recomputed. Medians and percentiles skip PRs that were never reviewed or never merged ([Transform](#transform-dbt)).
 
 | Repo         | First review p50 (h) | First review p90 (h) | Merge p50 (h) | Merge p90 (h) | Commits / week | Releases / year |
 |--------------|----------------------|----------------------|---------------|---------------|----------------|-----------------|
@@ -462,11 +460,11 @@ Read from `fct_pull_requests`, `mart_repo_monthly`, and `fct_releases`; no durat
 | plotly.py    | 16.1                 | 693.2                | 41.3          | 1,130.1       | 19.1           | 8.8             |
 | scikit-learn | 13.1                 | 275.2                | 36.6          | 837.5         | 22.6           | 5.3             |
 
-Releases per year count full releases only (prereleases excluded, as in section 7), divided by the time from 2024-01-01 to the run.
+Releases per year count full releases only (prereleases excluded, as in [Transform](#transform-dbt)), divided by the time from 2024-01-01 to the run.
 
-**Note on dask's releases per year.** dask's GitHub Releases start on 2024-04-19; earlier versions were published as git tags only, which the Releases endpoint does not return. Its 44 releases are therefore divided by a period about 3.5 months longer than the one they cover, so 15.5 per year **understates** its rate. Measured from its first GitHub Release it is 17.3 per year. dask has the most releases per year either way. Release regularity (section 9) is not affected, because it uses the gaps between releases, not a rate.
+**Note on dask's releases per year.** dask's GitHub Releases start on 2024-04-19; earlier versions were published as git tags only, which the Releases endpoint does not return. Its 44 releases are therefore divided by a period about 3.5 months longer than the one they cover, so 15.5 per year **understates** its rate. Measured from its first GitHub Release it is 17.3 per year. dask has the most releases per year either way. Release regularity ([How the score works](#how-the-score-works)) is not affected, because it uses the gaps between releases, not a rate.
 
-## 4. Pipeline-wide design
+## Pipeline-wide design
 
 ### Retries and error handling
 
@@ -496,13 +494,13 @@ Each task has its own Python logger with a file handler, and the same logger is 
 | 5 Model      | `logs/model.log`                     | The ranked table (score, rank, 6 subscores) and the equal-weight robustness check                                                             |
 | 6 Plot       | `logs/plot.log`                      | The path of each saved PNG                                                                                                                    |
 
-Python tests write their own logs to `logs/test_logs/` (section 13).
+Python tests write their own logs to `logs/test_logs/` ([Tests](#tests)).
 
-## 12. Additional features
+## Additional features
 
 | Item                 | Status        | Where                                                                                                                                                                                                                                                                                      |
 |----------------------|---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Concurrent fetching  | Done          | `extract`: one `fetch_repo` task per repo on a 3-worker `ThreadPoolTaskRunner`, with a shared `RATE_LOCK` (section 5)                                                                                                                                                                      |
+| Concurrent fetching  | Done          | `extract`: one `fetch_repo` task per repo on a 3-worker `ThreadPoolTaskRunner`, with a shared `RATE_LOCK` ([Extract](#extract))                                                                                                                                                                      |
 | Scheduled deployment | Done          | Monthly on the 28th at midnight Eastern on `uvasds-k8s-pool`; `python main.py --deploy`. Command, settings, and the manually triggered run's log are in [DEPLOYMENTS.md](DEPLOYMENTS.md)                                                                                                   |
 | API odometer         | Done          | Every request passes through `github_get`, which adds 1 to a thread-safe counter (`API_REQUESTS`, `ODOMETER_LOCK`). The flow resets it at the start and logs it at the end, even if a task fails. Unlike `extract`'s own count, it also counts requests from attempts that Prefect retried |
 | GraphQL ingestion    | Not attempted |                                                                                                                                                                                                                                                                                            |
@@ -514,7 +512,7 @@ Odometer from a local incremental run (2026-11-04 21:21 EST), matching extract's
 
 Server deployment runs are full runs, about 7,000 requests each, because every run starts from a fresh clone with no data (see DEPLOYMENTS.md).
 
-## 13. Tests
+## Tests
 
 Every Python test works on a temporary folder or a temporary copy of `packages.duckdb`, so the real data and database are never changed. Each test saves its output to `logs/test_logs/<test name>.log`, overwritten on every run, so the latest result can be read without rerunning it. The pipeline's own log lines from a test also go to the normal task logs in `logs/`.
 
@@ -533,7 +531,7 @@ Every Python test works on a temporary folder or a temporary copy of `packages.d
 | 5 Model      | `score_test.py`            | `health_scores` has one row per repo ranked 1–3, every score and subscore is between 0 and 1, and a second run gives the same table                                               | 0            |
 | 6 Plot       | `plot_test.py`             | All three PNGs are written and non-empty                                                                                                                                          | 0            |
 
-The transform stage's tests are the dbt tests (section 7), which run inside the flow.
+The transform stage's tests are the dbt tests ([Transform](#transform-dbt)), which run inside the flow.
 
 To run them all (about 200–360 API requests in total, a few minutes):
 
@@ -543,23 +541,25 @@ for t in tests/*_test.py tests/test_fetch_pages.py; do printf "%-32s" "$t"; pyth
 
 Last runs (2026-11-04): all 12 passed. A test run outside a flow prints a harmless Prefect warning, `Logger ... attempted to send logs to the API without a flow run id`.
 
+## Data quirks and limitations
+
 ### Data quirks handled in the pipeline
 
 - **dask's GitHub Releases start on 2024-04-19.** Earlier versions were git tags only, which the Releases endpoint does not return. Its releases per year (15.5) understates its rate (17.3 measured from its first release). Release regularity is not affected.
-- **plotly has 4 prereleases in the window.** They are kept in the data but left out of release regularity and releases per year (section 7).
+- **plotly has 4 prereleases in the window.** They are kept in the data but left out of release regularity and releases per year ([Transform](#transform-dbt)).
 - **7 plotly commits have author dates before 2024** (commits fetched by commit date can carry an older author date). They are in `stg_commits` but fall outside the monthly marts.
-- **23 commits have no linked GitHub account.** They count as non-bot (section 7).
+- **23 commits have no linked GitHub account.** They count as non-bot ([Transform](#transform-dbt)).
 
 ### Limitations
 
 - **Medians cover only finished steps.** Review and merge medians skip PRs still waiting, so they can look faster than the real experience of an open PR. The stale-backlog and reviewed-within-7-days shares cover the waiting PRs instead.
 - **"First-time" contributors means first seen in our data.** PR data starts with PRs updated since 2024, so someone whose earlier PRs were all older counts as new.
 - **Commit counts are an imperfect activity measure.** Commit habits differ between projects, and AI-assisted coding can raise commit and PR counts without more real work ([ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)). That is why commit trend has the lowest weight.
-- **The fixed scoring ranges and the weights are judgment calls.** The equal-weight check shows the ranking does not depend on the weights (section 9), but different ranges would change the subscores.
+- **The fixed scoring ranges and the weights are judgment calls.** The equal-weight check shows the ranking does not depend on the weights ([How the score works](#how-the-score-works)), but different ranges would change the subscores.
 - **The ranking is a snapshot.** The window grows with every run, so scores move as new months arrive, especially for dask while its merging is slow.
-- **Plot 3 cannot separate load from time.** scikit-learn's busy months are mostly in 2026, when its merge ratio fell for other reasons (section 10).
+- **Plot 3 cannot separate load from time.** scikit-learn's busy months are mostly in 2026, when its merge ratio fell for other reasons ([Plots](#plots)).
 
-## 2. Setup and run
+## Setup and run
 
 ### Requirements
 
@@ -590,7 +590,7 @@ python main.py
 
 This runs one Prefect flow, `rhk2dx-package-health-flow`: extract → load → dbt build → validate → score → plot.
 
-To publish the monthly scheduled deployment instead (see section 12 and `DEPLOYMENTS.md`):
+To publish the monthly scheduled deployment instead (see [Additional features](#additional-features) and `DEPLOYMENTS.md`):
 
 ```bash
 python main.py --deploy
@@ -619,7 +619,7 @@ curl -s -H "Authorization: Bearer $GH_PAT" https://api.github.com/rate_limit | g
 - `plots/*.png`: three plots
 - `logs/`: one log per task (`extract`, `load`, `transform`, `validate`, `model`, `plot`), plus dbt's own `dbt.log`
 
-## 3. Repository layout
+## Repository layout
 
 ```
 oss-package-health-pipeline/
@@ -648,7 +648,7 @@ oss-package-health-pipeline/
 ├── tests/
 │   ├── assert_pr_closed_after_created.sql   # dbt singular test
 │   ├── assert_review_after_pr_created.sql   # dbt singular test
-│   └── *_test.py, test_fetch_pages.py       # Python tests (section 13)
+│   └── *_test.py, test_fetch_pages.py       # Python tests (see Tests)
 │
 ├── plots/                         # the three PNGs written by the plot task
 │   ├── dimension_profile.png
@@ -683,7 +683,7 @@ dbt reads `tests/` for singular tests (`test-paths` in `dbt_project.yml`), so th
 | `images/`                               | Local reference images for plot styling (not project output)                                  |
 | `.env`, `__pycache__/`, `tests/output/` | Secrets, Python caches, test scratch files                                                    |
 
-## 14. Background
+## Background
 
 Built for DS 3022 at the University of Virginia School of Data Science, Fall 2026.
 The original project brief and course reference material are in [docs/course/](docs/course/).
