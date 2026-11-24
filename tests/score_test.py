@@ -1,4 +1,4 @@
-"""Run the Task 5 score_health task twice on a temp copy of packages.duckdb and check the table. 0 API requests.
+"""Run the score_health task twice on a temp copy of packages.duckdb and check the table. 0 API requests.
 
 Run from the project root:  python tests/score_test.py
 """

@@ -1,6 +1,6 @@
-"""Task 2 test: load the first full run's landed files (archived) into a temp DuckDB twice; row counts must match.
+"""Load test: load the first full run's landed files (archived) into a temp DuckDB twice; row counts must match.
 Also checks one row per record, _load_state rows, and the _LOADED marker.
-Costs 0 API requests. Evidence for the README (Task 2 Idempotent loads).
+Costs 0 API requests. Evidence for the README (section 6, Idempotent loads).
 
 Run from the project root:  python tests/load_full_test.py
 """

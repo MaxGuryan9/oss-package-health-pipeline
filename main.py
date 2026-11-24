@@ -30,7 +30,7 @@ from prefect_dbt import PrefectDbtRunner, PrefectDbtSettings
 REPOS = ["scikit-learn/scikit-learn", "dask/dask", "plotly/plotly.py"]
 WINDOW_START = "2024-01-01T00:00:00Z"
 GIT_URL = "https://github.com/MaxGuryan9/package-health-project-ds3022.git"
-WORK_POOL = "uvasds-k8s-pool"  # class Kubernetes pool (DEPLOYMENTS.md: keep as written)
+WORK_POOL = "uvasds-k8s-pool"  # shared Kubernetes work pool (docs/course/DEPLOYMENT-INSTRUCTIONS.md: keep as written)
 API_BASE = "https://api.github.com/repos/{REPOS}/{TYPE}"
 PER_PAGE = 100
 API_VERSION = "2026-03-10"
@@ -42,7 +42,7 @@ API_REQUESTS = 0  # odometer: GitHub API requests sent this flow run, across all
 ODOMETER_LOCK = threading.Lock()  # separate from RATE_LOCK, which is held during rate-limit sleeps
 PULLS_PARAMS = {"state": "all", "sort": "updated", "direction": "desc"}
 
-# Task 2: one raw table per endpoint. "id" and "updated_at" are DuckDB expressions on each record (rec).
+# Load: one raw table per endpoint. "id" and "updated_at" are DuckDB expressions on each record (rec).
 LOAD_SPECS = {
     "commits": {
         "table": "raw_commits", "files": "*/commits/page_*.json", "id_type": "VARCHAR",
@@ -62,13 +62,13 @@ LOAD_SPECS = {
     },
 }
 
-# Task 4: thresholds for outlier detection (README Task 4). Different author types get different cutoffs,
+# Validate: thresholds for outlier detection (README section 8). Different author types get different cutoffs,
 # because a wait that is normal for a human PR means an automated PR got stuck.
 HUMAN_MERGE_QUANTILE = 0.99  # human PRs: slower than 99% of that repo's merged human PRs; 0.99 (not 0.90) so every flag is far outside the trend
 BOT_MERGE_HOURS = 7 * 24     # bot PRs: automated updates normally merge within hours, so a week means stuck
 COMMIT_BURST_IQR = 3         # weekly commits above Q3 + 3 x IQR are "far outside" (Tukey's far-out rule)
 
-# Task 4: staging rows dropped on purpose (raw count minus these must equal the staging count)
+# Validate: staging rows dropped on purpose (raw count minus these must equal the staging count)
 STAGING_SPECS = {
     "commits": {"model": "stg_commits", "dropped": "false"},
     "pulls": {"model": "stg_pull_requests", "dropped": "false"},
@@ -76,7 +76,7 @@ STAGING_SPECS = {
     "releases": {"model": "stg_releases", "dropped": "(payload->>'draft')::boolean"},
 }
 
-# Task 5: fixed-range min-max scoring. score = (value - zero_at) / (one_at - zero_at), clipped to 0-1.
+# Score: fixed-range min-max scoring. score = (value - zero_at) / (one_at - zero_at), clipped to 0-1.
 # zero_at scores 0 (least healthy), one_at scores 1 (healthiest). Lower-is-better metrics have zero_at > one_at,
 # so the same formula flips them. Fixed bounds (not the 3 repos' min and max) keep close repos close
 # and do not change if the repo set changes.
@@ -95,14 +95,14 @@ SCORE_SPECS = {
     "merge_rate":             {"dimension": "throughput",      "weight": 10, "zero_at": 0,     "one_at": 1},
 }
 
-# Task 6: one fixed color per repo across every plot (README Presentation criterion)
+# Plot: one fixed color per repo across every plot, so repos are easy to compare
 REPO_COLORS = {
     "scikit-learn/scikit-learn": "#2a78d6",
     "dask/dask": "#eb6834",
     "plotly/plotly.py": "#2f9e6e",
 }
 TREND_PANELS = [
-    # rows ordered by Task 5 weight tier (SCORE_SPECS); backlog and release cadence have no monthly column in mart_repo_monthly
+    # rows ordered by health-score weight tier (SCORE_SPECS); backlog and release cadence have no monthly column in mart_repo_monthly
     # (column, title, y-axis unit, how to summarize the window in the panel subtitle, tier and dimension)
     ("median_first_review_hours", "Median first-review time", "hours (log scale)", "median", "Tier 1 · Responsiveness"),
     ("active_contributors", "Active PR authors", "authors / month", "median", "Tier 2 · Contributors"),
@@ -121,7 +121,7 @@ EXAMPLE_STYLE = {
     "xtick.major.size": 0, "ytick.major.size": 0,
     "legend.frameon": False,
 }
-# Task 6 plot 3: months grouped by PR load relative to the repo's own average (cutoffs 0.8x and 1.2x)
+# Plot 3: months grouped by PR load relative to the repo's own average (cutoffs 0.8x and 1.2x)
 LOAD_BINS_SQL = """
     WITH months AS (
         SELECT repo, merge_ratio, active_contributors,
@@ -168,7 +168,7 @@ plot_logger = logging.getLogger("plot")
 
 
 # Token: local runs use the GH_PAT env var; a deployment run on the server has no env var,
-# so it loads the Prefect Secret block instead (DEPLOYMENTS.md "Blocks / Secrets")
+# so it loads the Prefect Secret block instead (docs/course/DEPLOYMENT-INSTRUCTIONS.md "Blocks / Secrets")
 TOKEN = os.environ.get("GH_PAT") or Secret.load("rhk2dx-pat").get()
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
@@ -304,7 +304,7 @@ def fetch_reviews(
     created_since: str = WINDOW_START,
     out_dir: Path | None = None,
 ) -> tuple[list[dict], int]:
-    """One reviews call per PR created in the window, merged or not (README Task 1). Returns (reviews, requests)."""
+    """One reviews call per PR created in the window, merged or not (README section 5). Returns (reviews, requests)."""
     out_dir = out_dir or landing_dir(repo, "reviews")
     # Dict by number drops PRs listed twice (a resumed pulls fetch can repeat one at a page boundary).
     in_window = {pr["number"]: pr for pr in prs if pr["created_at"] >= created_since}
@@ -374,7 +374,7 @@ def fetch_repo(repo: str, commits_since: str, pulls_since: str, window_start: st
     """All four endpoints for one repo: pulls, then their reviews, then commits and releases. Returns requests made."""
     logger.info(f"[{repo}] commits since {commits_since}, pulls updated since {pulls_since}")
     prs, n_pulls = fetch_pages(repo, "pulls", PULLS_PARAMS, stop_before=pulls_since)
-    # review calls only for PRs updated since the watermark (README Task 2, incremental loads)
+    # review calls only for PRs updated since the watermark (README section 6, incremental loads)
     updated = [pr for pr in prs if pr["updated_at"] >= pulls_since]
     reviews, n_reviews = fetch_reviews(repo, updated, created_since=window_start)
     commits, n_commits = fetch_pages(repo, "commits", {"since": commits_since})
@@ -439,7 +439,7 @@ def load_table_task(endpoint: str) -> int:
 
 @task(name="finish-load")
 def finish_load_task() -> None:
-    """README Task 2: update _load_state only after every table loaded, then create the _LOADED marker."""
+    """Update _load_state only after every table loaded, then create the _LOADED marker."""
     with duckdb.connect(DB_PATH) as con:
         write_load_state(con)
     LOADED_MARKER.touch()
@@ -448,12 +448,12 @@ def finish_load_task() -> None:
 
 @flow(name="extract", task_runner=ThreadPoolTaskRunner(max_workers=len(REPOS)))
 def extract(window_start: str = WINDOW_START) -> int:
-    """Task 1: pull commits, PRs, reviews, and releases for all repos to data/raw/. Returns requests made."""
+    """Extract: pull commits, PRs, reviews, and releases for all repos to data/raw/. Returns requests made."""
     STOP.clear()
     mode = prepare_raw_dir()
     watermarks = read_watermarks()
     logger.info(f"Extract starting ({mode}): {len(REPOS)} repos, window from {window_start}")
-    # incremental: fetch commits and pulls only since the newest ones already loaded (README Task 2)
+    # incremental: fetch commits and pulls only since the newest ones already loaded (README section 6)
     commits_since = [watermarks.get((r, "commits"), window_start) for r in REPOS]
     pulls_since = [watermarks.get((r, "pulls"), window_start) for r in REPOS]
     try:
@@ -470,7 +470,7 @@ def extract(window_start: str = WINDOW_START) -> int:
 
 @flow(name="load")
 def load() -> None:
-    """Task 2: upsert data/raw/ into raw_* tables in packages.duckdb. Never calls the API."""
+    """Load: upsert data/raw/ into raw_* tables in packages.duckdb. Never calls the API."""
     load_logger.info(f"Load starting: {RAW_DIR} -> {DB_PATH}")
     for endpoint in LOAD_SPECS:  # one at a time: DuckDB allows a single writer
         load_table_task(endpoint)
@@ -479,7 +479,7 @@ def load() -> None:
 
 @task(name="dbt-build", log_prints=True)
 def dbt_build():
-    """Task 3: install dbt packages, then build and test every model. Fails if any model or test fails."""
+    """Transform: install dbt packages, then build and test every model. Fails if any model or test fails."""
     runner = PrefectDbtRunner(
         settings=PrefectDbtSettings(
             project_dir=str(DBT_DIR),
@@ -659,7 +659,7 @@ def log_descriptive_stats(con: duckdb.DuckDBPyConnection) -> None:
 
 @task(name="validate")
 def validate() -> None:
-    """Task 4: end-to-end checks from landed files to raw tables to staging, then outliers and statistics.
+    """Validate: end-to-end checks from landed files to raw tables to staging, then outliers and statistics.
 
     Runs every check before failing, so one run lists every problem. Raises if any completeness check fails.
     """
@@ -677,7 +677,7 @@ def validate() -> None:
 
 @task(name="score-health")
 def score_health() -> None:
-    """Task 5: score each repo per dimension (0-1), combine with SCORE_SPECS weights, rank, save to health_scores."""
+    """Score: score each repo per dimension (0-1), combine with SCORE_SPECS weights, rank, save to health_scores."""
     dimensions = []
     subscores = []
     weighted = []
@@ -801,7 +801,7 @@ def plot_monthly_trends(con: duckdb.DuckDBPyConnection, repos: list[str]) -> Pat
                 ax.tick_params(labelbottom=True, labelleft=True)
         add_titles(fig, f"Monthly metrics per repo ({df['month'].min():%b %Y} - {df['month'].max():%b %Y})",
                    "line = 3-month rolling mean · dots = raw monthly values · gray = the other two repos · "
-                   "columns in rank order · rows in Task 5 weight-tier order\n"
+                   "columns in rank order · rows in health-score weight-tier order\n"
                    "authors exclude bots · current partial month excluded")
         path = PLOT_DIR / "monthly_trends.png"
         fig.savefig(path, dpi=150)
@@ -848,7 +848,7 @@ def plot_load_vs_rejection(con: duckdb.DuckDBPyConnection, repos: list[str]) -> 
 
 @task(name="plot-health")
 def plot_health() -> None:
-    """Task 6: save the three plots as PNG to plots/."""
+    """Plot: save the three plots as PNG to plots/."""
     PLOT_DIR.mkdir(exist_ok=True)
     # no read_only=True: dbt keeps a read-write connection open in this process (see validate)
     with duckdb.connect(DB_PATH) as con:

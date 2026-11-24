@@ -157,7 +157,7 @@ models:
 
   - name: mart_health_inputs
     description: >
-      One row per repo, one column per metric scored in Task 5. Every column is a share,
+      One row per repo, one column per metric scored by `score_health`. Every column is a share,
       ratio or slope, never a raw count, so a large repo cannot win by volume alone.
     columns:
       - name: repo

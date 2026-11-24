@@ -18,6 +18,10 @@ monthly schedule as a Prefect deployment on Kubernetes.
 
 ![Health dimension profile](plots/dimension_profile.png)
 
+> **Data snapshot:** the numbers and plots in this README come from the run on
+> 2026-11-04 and do not include data after that date. The scheduled deployment
+> keeps running monthly, but this write-up is not updated automatically.
+
 ## 1. Overview
 
 The flow ranks three Python data science packages from healthiest to least healthy development community.

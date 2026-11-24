@@ -1,4 +1,4 @@
-"""Run the Task 4 validate task on a temp copy of packages.duckdb, then break the copy and check it fails. 0 API requests.
+"""Run the validate task on a temp copy of packages.duckdb, then break the copy and check it fails. 0 API requests.
 
 Run from the project root:  python tests/validate_test.py
 """

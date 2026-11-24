@@ -1,4 +1,4 @@
--- Mart: one row per repo, one column per metric scored in Task 5.
+-- Mart: one row per repo, one column per metric scored by `score_health`.
 -- Every column is a share, ratio or slope, never a raw count, so a large repo
 -- cannot win by volume alone. Direction (which way is healthier) is in schema.yml.
 

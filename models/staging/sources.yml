@@ -3,7 +3,7 @@ version: 2
 sources:
   - name: raw
     schema: main
-    description: Raw GitHub records loaded by the load flow (Task 2). One row per (repo, id); fields stay inside payload.
+    description: Raw GitHub records loaded by the load flow (`load`). One row per (repo, id); fields stay inside payload.
     tables:
       - name: raw_commits
         description: Commits since the window start, one row per (repo, sha).
