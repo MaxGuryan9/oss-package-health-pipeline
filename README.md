@@ -1,6 +1,6 @@
 # Open Source Package Health: GitHub Data Pipeline
 
-DS3022 Data Project 2 · rhk2dx · Package set B. The assignment text is in [PROJECT_INSTRUCTIONS.md](PROJECT_INSTRUCTIONS.md).
+DS3022 Data Project 2 · rhk2dx · Package set B. The assignment text is in [docs/course/PROJECT_INSTRUCTIONS.md](docs/course/PROJECT_INSTRUCTIONS.md).
 
 ## 1. Overview
 
@@ -133,14 +133,16 @@ package-health-project-ds3022/
 │   ├── monthly_trends.png
 │   └── load_vs_rejection.png
 │
-├── DEPLOYMENTS.md                 # our deployment record (top), then the Prefect deployment instructions
+├── DEPLOYMENTS.md                 # deployment command, settings, and the manual server run's log
 │
-│   # Template reference files (supplied with the assignment, not our work)
-├── PROJECT_INSTRUCTIONS.md        # the assignment text (was the template's README.md)
-├── CHECKLIST.md                   # submission checklist
-├── ASSESSING-HEALTH.md            # background on measuring open source health
-├── DBT-REFERENCE.md               # dbt layout, profiles, and PrefectDbtRunner reference
-├── EXTRAS.md                      # instructor tips
+├── docs/
+│   └── course/                    # reference files supplied with the course (not our work)
+│       ├── PROJECT_INSTRUCTIONS.md   # the assignment text (was the template's README.md)
+│       ├── CHECKLIST.md              # submission checklist
+│       ├── ASSESSING-HEALTH.md       # background on measuring open source health
+│       ├── DBT-REFERENCE.md          # dbt layout, profiles, and PrefectDbtRunner reference
+│       ├── DEPLOYMENT-INSTRUCTIONS.md  # Prefect deployment instructions (was the lower half of DEPLOYMENTS.md)
+│       └── EXTRAS.md                 # instructor tips
 │
 └── README.md                      # this write-up
 ```
@@ -312,7 +314,7 @@ Request counts are from `Extract finished: N API requests this run` in `logs/ext
 
 ## 7. Task 3: dbt
 
-`dbt build` runs inside the flow (`dbt_build`, using `PrefectDbtRunner` as in `DBT-REFERENCE.md`). It runs `dbt deps`, then builds every model and runs every test, and raises if any model or test fails. This is the only task that runs dbt. Staging models are views; marts are tables, so the tests read stored results (`dbt_project.yml`). Last run: `PASS=51 ERROR=0` (8 models, 43 tests) in about 4 s.
+`dbt build` runs inside the flow (`dbt_build`, using `PrefectDbtRunner` as in [DBT-REFERENCE.md](docs/course/DBT-REFERENCE.md)). It runs `dbt deps`, then builds every model and runs every test, and raises if any model or test fails. This is the only task that runs dbt. Staging models are views; marts are tables, so the tests read stored results (`dbt_project.yml`). Last run: `PASS=51 ERROR=0` (8 models, 43 tests) in about 4 s.
 
 ### Staging models (one per raw table)
 
@@ -509,7 +511,7 @@ Releases per year count full releases only (prereleases excluded, as in section 
 
 **Size normalization:** every metric is a share, a ratio, or a slope divided by the repo's own average, never a raw count. scikit-learn has 7.6 times as many PRs as plotly, but that alone can't raise its score. The contributor metric uses the top author's *share*, not a bus-factor count, because a count of authors grows with project size.
 
-**Trend component:** two metrics are slopes over the full window: `commit_trend` (is activity growing or shrinking?) and `top_author_share_trend` (is the project becoming more or less dependent on one person?). `commit_trend` is the required trend. The second was added because it measures fragility without `commit_trend`'s caveats (commits are not all equally meaningful, and AI-assisted coding changes commit habits; `ASSESSING-HEALTH.md`).
+**Trend component:** two metrics are slopes over the full window: `commit_trend` (is activity growing or shrinking?) and `top_author_share_trend` (is the project becoming more or less dependent on one person?). `commit_trend` is the required trend. The second was added because it measures fragility without `commit_trend`'s caveats (commits are not all equally meaningful, and AI-assisted coding changes commit habits; [ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)).
 
 ### Standardization: fixed-range min-max
 
@@ -574,7 +576,7 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 **Monthly trends.** Each column is one repo in rank order. Each row is a monthly measure from `mart_repo_monthly` that relates to one scored dimension, named in the panel subtitle, and the rows are ordered by that dimension's weight tier. These are not the scored metrics themselves, which are single values per repo in `mart_health_inputs`. The colored line is a 3-month rolling mean, the dots are the raw months, and the gray lines are the other two repos.
 
 - **Median first-review time.** scikit-learn stays steady at about 11 to 16 hours. plotly and dask rise together in 2026 (plotly from 6.7 hours in 2025 to 27, dask from 10.5 to 61). A longer wait for a first review means contributors hear back more slowly, a sign that maintainers are falling behind the incoming work. Both repos received more PRs in 2026, most from people new to the project, so a larger review load is a likely cause.
-- **Active PR authors.** plotly and dask have small groups of authors (about 6 to 12 a month) that stay level until a rise in mid to late 2026. scikit-learn has far more and keeps growing, from 51 a month in 2024 to 84 in 2026. A small, steady group can run a healthy project if it keeps up with its work. scikit-learn's growth is mostly first-time contributors (595 of its 655 PR authors in 2026 opened their first PR in our data that year), and its merge ratio fell from 0.83 in 2024 to 0.55 in 2026. The extra authors mostly bring more PRs for maintainers to review and turn down, not more maintainers. dask shows the same pattern on a smaller scale, with 157 first-time authors among its 166 in 2026. A late rise in new authors across all three repos may partly reflect AI-assisted contributions, which `ASSESSING-HEALTH.md` warns about.
+- **Active PR authors.** plotly and dask have small groups of authors (about 6 to 12 a month) that stay level until a rise in mid to late 2026. scikit-learn has far more and keeps growing, from 51 a month in 2024 to 84 in 2026. A small, steady group can run a healthy project if it keeps up with its work. scikit-learn's growth is mostly first-time contributors (595 of its 655 PR authors in 2026 opened their first PR in our data that year), and its merge ratio fell from 0.83 in 2024 to 0.55 in 2026. The extra authors mostly bring more PRs for maintainers to review and turn down, not more maintainers. dask shows the same pattern on a smaller scale, with 157 first-time authors among its 166 in 2026. A late rise in new authors across all three repos may partly reflect AI-assisted contributions, which [ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md) warns about.
 - **Top author's share.** scikit-learn stays near 0.18, so no single person dominates its merges. plotly fell from 0.62 in 2024 to about 0.44, becoming less dependent on one person. dask rose from 0.46 to 0.72 and reaches 1.0 in August and September 2026, but those months had one merge each, so the 1.0 reflects a single PR rather than one person taking over.
 - **Commits.** plotly moves in waves. Its biggest burst (245 and 253 commits in October and November 2024) came just before version 6.0.0 in January 2025, and commits rose again around version 7.0.0 in August 2026, which fits work being pushed ahead of major releases. scikit-learn is steady at about 100 a month with a slower 2026. dask started very high (237 commits in January 2024, 137 of them by one developer) and then fell to near zero. dask is not a new project settling down (its PR numbers were already above 10,000 in 2024), and its active authors went up while its commits went down. Together that points to a project that still receives contributions but is no longer merging them.
 - **PRs opened and merged.** scikit-learn opens about 1,700 PRs a year and merges about 1,200, with a slower 2026 (889 merges in ten months). plotly opens a few more PRs each year and merges a steady 150 to 175. dask's two rows split apart in 2026, with PRs opened rising while merges fell to zero by October.
@@ -611,7 +613,7 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 
 - **Medians cover only finished steps.** Review and merge medians skip PRs still waiting, so they can look faster than the real experience of an open PR. The stale-backlog and reviewed-within-7-days shares cover the waiting PRs instead.
 - **"First-time" contributors means first seen in our data.** PR data starts with PRs updated since 2024, so someone whose earlier PRs were all older counts as new.
-- **Commit counts are an imperfect activity measure.** Commit habits differ between projects, and AI-assisted coding can raise commit and PR counts without more real work (`ASSESSING-HEALTH.md`). That is why commit trend has the lowest weight.
+- **Commit counts are an imperfect activity measure.** Commit habits differ between projects, and AI-assisted coding can raise commit and PR counts without more real work ([ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)). That is why commit trend has the lowest weight.
 - **The fixed scoring ranges and the weights are judgment calls.** The equal-weight check shows the ranking does not depend on the weights (section 9), but different ranges would change the subscores.
 - **The ranking is a snapshot.** The window grows with every run, so scores move as new months arrive, especially for dask while its merging is slow.
 - **Plot 3 cannot separate load from time.** scikit-learn's busy months are mostly in 2026, when its merge ratio fell for other reasons (section 10).
