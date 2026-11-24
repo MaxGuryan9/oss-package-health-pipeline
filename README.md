@@ -64,10 +64,10 @@ With equal weights the order is the same (0.666 / 0.603 / 0.517). Section 9 expl
 ### Setup
 
 ```bash
-git clone https://github.com/MaxGuryan9/package-health-project-ds3022.git
-cd package-health-project-ds3022
-uv venv proj2 --python 3.12         # or: python3.12 -m venv proj2
-source proj2/bin/activate
+git clone https://github.com/MaxGuryan9/oss-package-health-pipeline.git
+cd oss-package-health-pipeline
+uv venv .venv --python 3.12        # or: python3.12 -m venv .venv
+source .venv/bin/activate
 uv pip install -r requirements.txt  # or: pip install -r requirements.txt
 export GH_PAT=<your token>
 ```
@@ -84,7 +84,7 @@ python main.py
 
 This runs one Prefect flow, `rhk2dx-package-health-flow`: extract → load → dbt build → validate → score → plot.
 
-To publish the monthly scheduled deployment instead (extended item; see section 12 and `DEPLOYMENTS.md`):
+To publish the monthly scheduled deployment instead (see section 12 and `DEPLOYMENTS.md`):
 
 ```bash
 python main.py --deploy
@@ -116,7 +116,7 @@ curl -s -H "Authorization: Bearer $GH_PAT" https://api.github.com/rate_limit | g
 ## 3. Repository layout
 
 ```
-package-health-project-ds3022/
+oss-package-health-pipeline/
 ├── main.py                        # the Prefect flow and all six tasks
 ├── requirements.txt               # pinned dependencies
 │
@@ -144,7 +144,7 @@ package-health-project-ds3022/
 │   ├── assert_review_after_pr_created.sql   # dbt singular test
 │   └── *_test.py, test_fetch_pages.py       # Python tests (section 13)
 │
-├── plots/                         # the three PNGs written by Task 6
+├── plots/                         # the three PNGs written by the plot task
 │   ├── dimension_profile.png
 │   ├── monthly_trends.png
 │   └── load_vs_rejection.png
@@ -173,15 +173,15 @@ dbt reads `tests/` for singular tests (`test-paths` in `dbt_project.yml`), so th
 | `packages.duckdb`                       | The database                                                                                  |
 | `logs/`                                 | Task logs, `dbt.log`, and test logs (`logs/test_logs/`)                                       |
 | `target/`, `dbt_packages/`              | dbt build output and installed dbt packages                                                   |
-| `proj2/`                                | The virtual environment                                                                       |
-| `images/`                               | Example plots from the assignment template; kept locally as the style reference for our plots |
+| `.venv/`                                | The virtual environment                                                                       |
+| `images/`                               | Local reference images for plot styling (not project output)                                  |
 | `.env`, `__pycache__/`, `tests/output/` | Secrets, Python caches, test scratch files                                                    |
 
 ## 4. Pipeline-wide design
 
 ### Retries and error handling
 
-Only Task 1 talks to the network, so it is the only task with retries.
+Only extract talks to the network, so it is the only task with retries.
 
 | Failure                                                  | Where                                   | What happens                                                                                                                                                                                                                                                                                                                                                       |
 |----------------------------------------------------------|-----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -192,7 +192,7 @@ Only Task 1 talks to the network, so it is the only task with retries.
 | The re-raised error                                      | `fetch_repo` task, `retry_if_transient` | Transient failures (403/429, 5xx, timeouts, connection errors, broken JSON) are retried up to 3 times, with increasing delays of 10, 30, and 60 s. Pages already on disk are skipped, so a retry costs only the requests that had not succeeded. Permanent failures (other 4xx, such as 404 or 401) fail at once, because they would fail the same way every time. |
 | Ctrl-C                                                   | `extract`, `retry_if_transient`         | Workers stop at their next request or sleep. A Ctrl-C stop is never retried.                                                                                                                                                                                                                                                                                       |
 
-Tasks 2–6 work on local files and the database. A failure there (a bad file, a failed dbt test, a validation mismatch) would fail again on a retry, so these tasks have no retries and fail the flow immediately.
+Load through plot work on local files and the database. A failure there (a bad file, a failed dbt test, a validation mismatch) would fail again on a retry, so these tasks have no retries and fail the flow immediately.
 
 ### Logging
 
@@ -209,7 +209,7 @@ Each task has its own Python logger with a file handler, and the same logger is 
 
 Python tests write their own logs to `logs/test_logs/` (section 13).
 
-## 5. Task 1: Extract
+## 5. Extract
 
 ### Endpoints and record counts (first full run, 2026-11-01)
 
@@ -232,7 +232,7 @@ Total: 7,034 API requests. Every count above is logged per repo and endpoint in 
 - **Secondary limit:** a 403/429 with `Retry-After` sleeps that many seconds, then raises so Prefect retries (section 4).
 - 5xx errors and timeouts are retried by Prefect (section 4).
 
-### Concurrent fetching (extended item)
+### Concurrent fetching
 
 `extract` runs one `fetch_repo` task per repo in parallel (`fetch_repo.map(...)` on a `ThreadPoolTaskRunner` with 3 workers). One token means one shared budget, so all threads share `RATE_LOCK`: when one thread sleeps off the rate limit it holds the lock, and every other thread waits at its next request.
 
@@ -267,9 +267,9 @@ The budget went from 4,437 before the stop to 4,430 after the restart, so the pa
 
 > **Note on the missing Ctrl-C line.** The warning `Ctrl-C received: stopping workers; pages on disk are kept for resume` was added to `extract` after this full run, so it does not appear in the excerpt above. It is confirmed by `tests/interrupt_test.py`, which sends a real Ctrl-C to a running extract (`logs/test_logs/interrupt_test.log`: the warning is logged and the workers stop 0.7 s later). The full run was not repeated to capture the line: the gap was found too close to the deadline, and a fresh full run costs about 7,000 requests and up to 70 minutes.
 
-When `_LOADED` exists, everything on disk is already in DuckDB. The run moves `data/raw/` to `data/archive/raw_<UTC time>/` (kept for Task 4, instead of deleted) and fetches only records newer than the `_load_state` watermarks (section 6).
+When `_LOADED` exists, everything on disk is already in DuckDB. The run moves `data/raw/` to `data/archive/raw_<UTC time>/` (kept for validation, instead of deleted) and fetches only records newer than the `_load_state` watermarks (section 6).
 
-## 6. Task 2: Load
+## 6. Load
 
 ### Raw tables
 
@@ -326,9 +326,9 @@ Records fetched again at a watermark boundary are replaced by the upsert, not du
 
 Request counts are from `Extract finished: N API requests this run` in `logs/extract.log`; row counts are from `logs/load.log`. An incremental run needs 13–61 requests instead of 7,034.
 
-> Run 4 completed extract, load, and dbt, then failed when Task 4 opened the database read-only. dbt keeps a read-write connection open in the same process, and DuckDB refuses a second connection with different settings. Task 4 now connects with default settings; run 5 passed 4 minutes later.
+> Run 4 completed extract, load, and dbt, then failed when validation opened the database read-only. dbt keeps a read-write connection open in the same process, and DuckDB refuses a second connection with different settings. Validation now connects with default settings; run 5 passed 4 minutes later.
 
-## 7. Task 3: dbt
+## 7. Transform (dbt)
 
 `dbt build` runs inside the flow (`dbt_build`, using `PrefectDbtRunner` as in [DBT-REFERENCE.md](docs/course/DBT-REFERENCE.md)). It runs `dbt deps`, then builds every model and runs every test, and raises if any model or test fails. This is the only task that runs dbt. Staging models are views; marts are tables, so the tests read stored results (`dbt_project.yml`). Last run: `PASS=51 ERROR=0` (8 models, 43 tests) in about 4 s.
 
@@ -348,22 +348,22 @@ Request counts are from `Extract finished: N API requests this run` in `logs/ext
 
 ### Fact marts
 
-**`fct_pull_requests`**: one row per PR created on or after 2024-01-01, with the required flags and durations: `is_merged`, `is_closed_unmerged`, `is_open`, `first_review_at`, `hours_to_first_review`, `reviewed_within_7d`, `hours_to_merge`, `hours_to_close`, `is_stale`, `has_approving_review`.
+**`fct_pull_requests`**: one row per PR created on or after 2024-01-01, with the core flags and durations: `is_merged`, `is_closed_unmerged`, `is_open`, `first_review_at`, `hours_to_first_review`, `reviewed_within_7d`, `hours_to_merge`, `hours_to_close`, `is_stale`, `has_approving_review`.
 
 - A review counts only if it is not by the PR author and not by a bot. A review by a deleted account (NULL login) does not count, because it can't be shown to be a non-author.
 - Run time is `max(fetched_at)`, so a rebuild without new data gives the same results.
 - `is_stale` = open and not updated for more than 180 days before run time.
 
-**`fct_releases`**: one row per published release on or after 2024-01-01. `days_since_previous` uses `lag()` over all releases before the window filter, so the first release in the window still measures its gap to the one before it. **Added column:** `days_since_previous_full` is the gap to the previous *full* release (NULL for prereleases). Release regularity in Task 5 uses it, because an rc or beta build is not the same event as a release, and counting it would split one gap into two.
+**`fct_releases`**: one row per published release on or after 2024-01-01. `days_since_previous` uses `lag()` over all releases before the window filter, so the first release in the window still measures its gap to the one before it. **Added column:** `days_since_previous_full` is the gap to the previous *full* release (NULL for prereleases). Release regularity in the health score uses it, because an rc or beta build is not the same event as a release, and counting it would split one gap into two.
 
 ### Aggregate marts
 
-**`mart_repo_monthly`**: one row per repo × month, January 2024 through the run month (35 months × 3 repos). The month list comes from `generate_series` crossed with the repos, so a month with no activity shows 0 instead of disappearing. It has the required columns, plus two:
+**`mart_repo_monthly`**: one row per repo × month, January 2024 through the run month (35 months × 3 repos). The month list comes from `generate_series` crossed with the repos, so a month with no activity shows 0 instead of disappearing. It has the core columns, plus two:
 
 - `month_index` (0 = January 2024): the x-axis for the trend slopes.
 - `top_author_share`: the share of the month's merged non-bot PRs written by the busiest author. It is NULL when a month has no merges, so an empty month doesn't look perfectly spread out.
 
-**`mart_health_inputs`**: one row per repo, one column per Task 5 metric (section 9). Every column is a share, ratio, or slope, never a raw count. Tasks 4–6 read durations and rates from these marts; no Python code recomputes them.
+**`mart_health_inputs`**: one row per repo, one column per health-score metric (section 9). Every column is a share, ratio, or slope, never a raw count. Validation, scoring, and plotting read durations and rates from these marts; no Python code recomputes them.
 
 ### How medians treat open PRs
 
@@ -378,7 +378,7 @@ Open PRs are kept in `fct_pull_requests` with `is_open = true`. They are never d
 | Type         | Where                                      | What it checks                                                                                                                                                                                                                                                                                                                                                                                          |
 |--------------|--------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Generic (12) | `models/staging/schema.yml`                | `unique` + `not_null` on `sha`, review `id`, release `id`; `(repo, number)` unique for PRs (`dbt_utils.unique_combination_of_columns`) and `number` not null; `committed_at` not null; `relationships` from `stg_pr_reviews.pr_number` to `stg_pull_requests.number`; `accepted_values` on PR `state` (`open`, `closed`) and review `state` (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`) |
-| Generic (29) | `models/marts/schema.yml`                  | Unique keys: `(repo, number)`, `(repo, month)`, release `id`, `repo` in `mart_health_inputs`; `not_null` on keys, dates, and every Task 5 metric; `accepted_values` on PR `state`; `dbt_utils.accepted_range`: durations and release gaps ≥ 0, shares and ratios between 0 and 1                                                                                                                        |
+| Generic (29) | `models/marts/schema.yml`                  | Unique keys: `(repo, number)`, `(repo, month)`, release `id`, `repo` in `mart_health_inputs`; `not_null` on keys, dates, and every health-score metric; `accepted_values` on PR `state`; `dbt_utils.accepted_range`: durations and release gaps ≥ 0, shares and ratios between 0 and 1                                                                                                                        |
 | Singular     | `tests/assert_pr_closed_after_created.sql` | No PR closed or merged before it was created                                                                                                                                                                                                                                                                                                                                                            |
 | Singular     | `tests/assert_review_after_pr_created.sql` | No review submitted before its PR was created                                                                                                                                                                                                                                                                                                                                                           |
 
@@ -391,7 +391,7 @@ Results print to the terminal during the run and are saved in `logs/dbt.log`, fo
 
 `schema.yml` in each folder describes every model and column; the raw tables are declared as dbt sources in `models/staging/sources.yml`.
 
-## 8. Task 4: Validation
+## 8. Validation
 
 `validate` is a Python task (no dbt) that runs after dbt. It runs every check, logs the results, and raises once at the end if any completeness check failed, so one run lists every problem. Numbers below are from the last flow run (2026-11-04 13:33, `logs/validate.log`).
 
@@ -508,9 +508,9 @@ Read from `fct_pull_requests`, `mart_repo_monthly`, and `fct_releases`; no durat
 
 Releases per year count full releases only (prereleases excluded, as in section 7), divided by the time from 2024-01-01 to the run.
 
-**Note on dask's releases per year.** dask's GitHub Releases start on 2024-04-19; earlier versions were published as git tags only, which the Releases endpoint does not return. Its 44 releases are therefore divided by a period about 3.5 months longer than the one they cover, so 15.5 per year **understates** its rate. Measured from its first GitHub Release it is 17.3 per year. dask has the most releases per year either way. Release regularity (Task 5) is not affected, because it uses the gaps between releases, not a rate.
+**Note on dask's releases per year.** dask's GitHub Releases start on 2024-04-19; earlier versions were published as git tags only, which the Releases endpoint does not return. Its 44 releases are therefore divided by a period about 3.5 months longer than the one they cover, so 15.5 per year **understates** its rate. Measured from its first GitHub Release it is 17.3 per year. dask has the most releases per year either way. Release regularity (section 9) is not affected, because it uses the gaps between releases, not a rate.
 
-## 9. Task 5: Health model and ranking
+## 9. Health model and ranking
 
 `score_health` reads `mart_health_inputs`, turns each metric into a 0–1 subscore (1 = healthiest), combines the subscores with weights, ranks the repos, writes the table `health_scores`, and logs it to `logs/model.log`.
 
@@ -527,7 +527,7 @@ Releases per year count full releases only (prereleases excluded, as in section 
 
 **Size normalization:** every metric is a share, a ratio, or a slope divided by the repo's own average, never a raw count. scikit-learn has 7.6 times as many PRs as plotly, but that alone can't raise its score. The contributor metric uses the top author's *share*, not a bus-factor count, because a count of authors grows with project size.
 
-**Trend component:** two metrics are slopes over the full window: `commit_trend` (is activity growing or shrinking?) and `top_author_share_trend` (is the project becoming more or less dependent on one person?). `commit_trend` is the required trend. The second was added because it measures fragility without `commit_trend`'s caveats (commits are not all equally meaningful, and AI-assisted coding changes commit habits; [ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)).
+**Trend component:** two metrics are slopes over the full window: `commit_trend` (is activity growing or shrinking?) and `top_author_share_trend` (is the project becoming more or less dependent on one person?). `top_author_share_trend` was added because it measures fragility without `commit_trend`'s caveats (commits are not all equally meaningful, and AI-assisted coding changes commit habits; [ASSESSING-HEALTH.md](docs/course/ASSESSING-HEALTH.md)).
 
 ### Standardization: fixed-range min-max
 
@@ -575,7 +575,7 @@ The flow also logs the ranking with equal weights (1/6 each; logged only, not st
 
 This doesn't prove the weights are correct; weights are a judgment. It shows the ranking doesn't depend on them. plotly beats scikit-learn on 4 of 6 dimensions (backlog, contributors, activity, throughput), so the order only flips under extreme weights, such as putting about half the total on responsiveness. Our weights mainly reduce the influence of noisy metrics like commit trend. That narrows dask's gap (its weakest dimensions are activity and contributors) but doesn't change its rank.
 
-## 10. Task 6: Plots
+## 10. Plots
 
 `plot_health` saves three PNGs to `plots/`. Every plot uses the same color per repo (plotly green, scikit-learn blue, dask orange) and lists the repos in rank order.
 
@@ -634,7 +634,7 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 - **The ranking is a snapshot.** The window grows with every run, so scores move as new months arrive, especially for dask while its merging is slow.
 - **Plot 3 cannot separate load from time.** scikit-learn's busy months are mostly in 2026, when its merge ratio fell for other reasons (section 10).
 
-## 12. Extended items
+## 12. Additional features
 
 | Item                 | Status        | Where                                                                                                                                                                                                                                                                                      |
 |----------------------|---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -669,7 +669,7 @@ Every Python test works on a temporary folder or a temporary copy of `packages.d
 | 5 Model      | `score_test.py`            | `health_scores` has one row per repo ranked 1–3, every score and subscore is between 0 and 1, and a second run gives the same table                                               | 0            |
 | 6 Plot       | `plot_test.py`             | All three PNGs are written and non-empty                                                                                                                                          | 0            |
 
-Task 3's tests are the dbt tests (section 7), which run inside the flow.
+The transform stage's tests are the dbt tests (section 7), which run inside the flow.
 
 To run them all (about 200–360 API requests in total, a few minutes):
 
@@ -678,3 +678,8 @@ for t in tests/*_test.py tests/test_fetch_pages.py; do printf "%-32s" "$t"; pyth
 ```
 
 Last runs (2026-11-04): all 12 passed. A test run outside a flow prints a harmless Prefect warning, `Logger ... attempted to send logs to the API without a flow run id`.
+
+## 14. Background
+
+Built for DS 3022 at the University of Virginia School of Data Science, Fall 2026.
+The original project brief and course reference material are in [docs/course/](docs/course/).
