@@ -148,6 +148,20 @@ This doesn't prove the weights are correct; weights are a judgment. It shows the
 
 ## Pipeline overview
 
+```mermaid
+flowchart LR
+    GH[("GitHub REST API")] -->|"commits, PRs,<br/>reviews, releases"| EX["extract<br/>3 repos in parallel"]
+    EX --> RAW[/"data/raw/*.json"/]
+    RAW --> LD["load<br/>upsert"]
+    LD --> DB[("DuckDB<br/>raw_* tables")]
+    DB --> DBT["dbt build<br/>stg → fct → mart<br/>43 tests"]
+    DBT --> VAL["validate<br/>files → raw → staging"]
+    VAL --> SC["score_health<br/>6 dimensions, weighted"]
+    SC --> PL["plot_health"]
+    PL --> PNG[/"plots/*.png"/]
+    LD -. "_load_state watermarks" .-> EX
+```
+
 `rhk2dx-package-health-flow` in `main.py` runs six tasks in order:
 
 | #   | Task                | What it does                                                                         | Output                                               |
