@@ -40,6 +40,15 @@ Analysis window: 2024-01-01 through the time of each run (35 months, January 202
 
 With equal weights the order is the same (0.666 / 0.603 / 0.517). [How the score works](#how-the-score-works) explains the metrics and weights. [What the data shows](#what-the-data-shows-about-each-repo) covers dask's rank: its merging slowed sharply from July 2026 (1 merge each in August and September, against an average of 30.5 per month in 2024–25), and it has not merged a PR since 2026-09-29, though maintainers still review and close PRs.
 
+### Key findings
+
+- **plotly ranks first because it has no weak spot:** the smallest stale backlog
+  (subscore 0.85), the best contributor score (0.72), and solid throughput and activity.
+- **scikit-learn leads responsiveness (0.64) and release cadence (0.67)**, but 34% of its
+  open PRs are stale, the largest backlog of the three (subscore 0.66 on a 25% dimension).
+- **dask has the highest throughput (0.87) but the lowest contributor (0.24) and activity
+  (0.12) scores**, which matches its merge slowdown since July 2026 (no PR merged since 2026-09-29).
+
 ### What the data shows about each repo
 
 - **dask's merging slowed sharply from July 2026.** It merged 10 PRs in July, 1 each in August and September, and none in October, against an average of 30.5 a month in 2024–25. It has not merged a PR since 2026-09-29 (36 days at the last run). That does not prove it stopped: the gap before that one was 43 days, and maintainers still close PRs (10 since 2026-09-29) and review them (1 approval). Before July 2026 no gap between merges was longer than 21 days.
